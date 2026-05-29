@@ -2,10 +2,10 @@ import logging
 import sqlite3
 import random
 import re
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from nlp_utils import process_message, get_intent
-from price_utils import parse_price, get_shoes_by_filters
+from price_utils import parse_price
 from telegram.request import HTTPXRequest
 
 TOKEN = "8321615785:AAGZNYwUQyeyWiPeslWq50EDcvvH9n0G4-Y"
@@ -21,8 +21,54 @@ BRANDS = {
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- ФУНКЦИИ ГЕНЕРАЦИИ КНОПОК ---
+
+def get_start_keyboard():
+    """Главное меню"""
+    keyboard = [
+        ['👟 Подобрать обувь', '💬 Просто поболтать']
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_types_keyboard():
+    """Выбор типа обуви"""
+    keyboard = [
+        ['Кроссовки', 'Кеды'],
+        ['Туфли', 'Ботинки'],
+        ['🏠 В главное меню']
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_brands_keyboard():
+    """Выбор бренда"""
+    keyboard = [
+        ['Nike', 'Adidas'],
+        ['Puma', 'Reebok'],
+        ['Любой бренд'],
+        ['⬅️ Назад', '🏠 В главное меню']
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_price_keyboard():
+    """Подсказки для бюджета"""
+    keyboard = [
+        ['Любой бюджет'],
+        ['⬅️ Назад', '🏠 В главное меню']
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_failure_keyboard():
+    """Если ничего не нашлось"""
+    keyboard = [
+        ['⬅️ Назад'],
+        ['🏠 В главное меню']
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+# --- РАБОТА С БД ---
+
 def save_dialog(user_id, user_msg, bot_msg):
-    # Подключаемся к ПРАВИЛЬНОЙ базе данных
     conn = sqlite3.connect('shoe_shop.db')
     cur = conn.cursor()
     cur.execute("INSERT INTO conversations (user_id, user_message, bot_answer) VALUES (?, ?, ?)", 
@@ -31,7 +77,6 @@ def save_dialog(user_id, user_msg, bot_msg):
     conn.close()
 
 def search_shoes(shoes_type=None, brand=None, max_price=None):
-    # Подключаемся к ПРАВИЛЬНОЙ базе данных
     conn = sqlite3.connect('shoe_shop.db')
     cur = conn.cursor()
     
@@ -42,11 +87,11 @@ def search_shoes(shoes_type=None, brand=None, max_price=None):
         query += " AND LOWER(shoes_type) = ?"
         params.append(shoes_type.lower())
     
-    if brand:
+    if brand and brand != "Любой":
         query += " AND LOWER(brand) = ?"
         params.append(brand.lower())
     
-    if max_price is not None:
+    if max_price is not None and max_price != float('inf'):
         query += " AND price <= ?"
         params.append(max_price)
     
@@ -71,17 +116,19 @@ def format_shoes_list(shoes_list):
         result += f"• **{item[0]}**\n  Бренд: {item[5]}\n  Стоимость: {item[2]}\n  Описание: {item[3]}\n  Ссылка: {item[6]}\n\n"
     return result
 
+
+# --- ОСНОВНАЯ ЛОГИКА ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text(
+    response = (
         "Привет! Я бот-помощник магазина обуви. 👟\n\n"
-        "Можете просто поболтать со мной — я с радостью поддержу разговор.\n"
-        "А когда решите обновить гардероб — помогу подобрать идеальную пару!\n\n"
-        "Просто напишите 'Хочу купить обувь' или спросите 'Что ты умеешь?'"
+        "Чем вы хотите заняться? Выберите действие на клавиатуре ниже:"
     )
+    await update.message.reply_text(response, reply_markup=get_start_keyboard())
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
+    user_text = context.user_data.pop('voice_text_override', update.message.text)
     user_id = update.effective_user.id
     user_text_lower = user_text.lower()
     
@@ -89,9 +136,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['msg_count'] = 0
         context.user_data['ad_triggered'] = False
 
-    # 1. ОБРАБОТКА СТРОГОГО ОТКАЗА ПОЛЬЗОВАТЕЛЯ
-    rejection_words = ["не нужно", "не нужна", "не хочу", "нет", "ничего", "не интересует", "отмена", "отстань", "хватить"]
-    # Исключение, если пользователь отвечает "нет" на вопрос "Понравился ли вариант?"
+    # 1. СТРОГИЙ ПЕРЕХВАТ НАВИГАЦИОННЫХ КНОПОК НА ЛЮБОМ ШАГЕ
+    if "в главное меню" in user_text_lower or user_text_lower == "/start":
+        context.user_data.clear()
+        response = "Вы вернулись в главное меню. Чем займемся?"
+        await update.message.reply_text(response, reply_markup=get_start_keyboard())
+        save_dialog(user_id, user_text, response)
+        return
+
+    # Логика обработки кнопки "Назад"
+    if "назад" in user_text_lower or "⬅️" in user_text_lower:
+        if context.user_data.get('awaiting_brand'):
+            # Назад с выбора бренда -> на выбор типа обуви
+            context.user_data['awaiting_brand'] = False
+            context.user_data['awaiting_type'] = True
+            response = "Хорошо, давайте вернемся назад. Что именно ищете: кроссовки, кеды, туфли или ботинки?"
+            await update.message.reply_text(response, reply_markup=get_types_keyboard())
+            return
+        elif context.user_data.get('awaiting_price') or context.user_data.get('waiting_for_failure'):
+            # Назад с ввода цены ИЛИ после ошибки поиска -> на выбор бренда
+            context.user_data['awaiting_price'] = False
+            context.user_data['waiting_for_failure'] = False
+            context.user_data['awaiting_brand'] = True
+            shoes_type = context.user_data.get('shoes_type', 'обувь')
+            response = f"Возвращаемся к выбору бренда для категории '{shoes_type}'. Какой бренд предпочитаете?"
+            await update.message.reply_text(response, reply_markup=get_brands_keyboard())
+            return
+        elif context.user_data.get('waiting_for_shoes_answer'):
+            # Назад от финального вопроса "нравится ли" -> на ввод стоимости
+            context.user_data['waiting_for_shoes_answer'] = False
+            context.user_data['awaiting_price'] = True
+            brand = context.user_data.get('brand', 'Любой')
+            response = f"Хорошо, изменим бюджет. На какой максимальный бюджет в рублях рассчитываете (для бренда {brand})?"
+            await update.message.reply_text(response, reply_markup=get_price_keyboard())
+            return
+
+    # Отказ от покупки в режиме болталки
+    rejection_words = ["не нужно", "не нужна", "не хочу", "нет", "ничего", "не интересует", "отмена", "отстань", "хватит"]
     if any(word in user_text_lower for word in rejection_words) and not context.user_data.get('waiting_for_shoes_answer'):
         context.user_data.clear()
         response = random.choice([
@@ -99,11 +180,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Понял-принял, закрыли тему покупок. 😊 Как вообще неделя проходит?",
             "Без проблем, не навязываюсь. Расскажи лучше, любишь ли ты смотреть сериалы?"
         ])
-        await update.message.reply_text(response)
+        await update.message.reply_text(response, reply_markup=get_start_keyboard())
         save_dialog(user_id, user_text, response)
         return
 
-    # 2. ПЕРЕХВАТ ШАГОВ ПОДБОРА ОБУВИ
+    # 2. ПЕРЕХВАТ ТЕКУЩИХ ШАГОВ ПОДБОРА ОБУВИ
     if context.user_data.get('awaiting_type'):
         await handle_shoes_type(update, context, user_text)
         return
@@ -116,10 +197,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('waiting_for_shoes_answer'):
         await handle_answer_after_shoes(update, context, user_text)
         return
+    if context.user_data.get('waiting_for_failure'):
+        # Если пользователь просто что-то пишет вместо нажатия кнопок на этапе ошибки
+        await update.message.reply_text("Пожалуйста, нажмите кнопку '⬅️ Назад', чтобы изменить бюджет, или '🏠 В главное меню'.", reply_markup=get_failure_keyboard())
+        return
 
-    # Увеличиваем шаг разговора для нативной рекламы
+    # 3. ОБРАБОТКА СТАРТОВЫХ КНОПОК ИЛИ ОБЫЧНОГО ТЕКСТА (БОЛТАЛКА)
+    if "подобрать обувь" in user_text_lower or "купить обувь" in user_text_lower or "подбор" in user_text_lower:
+        response = "О, подбор обуви — это по моей части! 👟 Что именно ищете?"
+        context.user_data['awaiting_type'] = True
+        await update.message.reply_text(response, reply_markup=get_types_keyboard())
+        save_dialog(user_id, user_text, response)
+        return
+
+    if "просто поболтать" in user_text_lower:
+        response = "С удовольствием поболтаю! Расскажи, как дела? Или можешь задать мне любой вопрос."
+        await update.message.reply_text(response, reply_markup=ReplyKeyboardRemove()) # Скрываем меню, чтобы не мешало общаться
+        save_dialog(user_id, user_text, response)
+        return
+
+    # Логика нативной рекламы и болталки ИИ
     context.user_data['msg_count'] += 1
-    
     should_advertise = False
     if context.user_data['msg_count'] == 3 and not context.user_data['ad_triggered']:
         should_advertise = True
@@ -127,17 +225,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     intent, auto_response = process_message(user_text, allow_ad=should_advertise)
     
-    if intent == "buy_shoes" or "купить обувь" in user_text_lower or "подбор" in user_text_lower:
-        response = "О, подбор обуви — это по моей части! 👟 Что именно ищете: кроссовки, кеды, туфли или ботинки?"
+    if intent == "buy_shoes":
+        response = "О, подбор обуви — это по моей части! 👟 Что именно ищете?"
         context.user_data['awaiting_type'] = True
+        await update.message.reply_text(response, reply_markup=get_types_keyboard())
     elif should_advertise:
         response = auto_response
         context.user_data['awaiting_type'] = True 
+        await update.message.reply_text(response, reply_markup=get_types_keyboard())
     else:
         response = auto_response if auto_response else "Интересно! Расскажи подробнее?"
+        await update.message.reply_text(response)
 
-    await update.message.reply_text(response)
     save_dialog(user_id, user_text, response)
+
+
+# --- ПОШАГОВЫЕ ОБРАБОТЧИКИ ---
 
 async def handle_shoes_type(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
     user_text_lower = user_text.lower()
@@ -159,13 +262,13 @@ async def handle_shoes_type(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         context.user_data['shoes_type'] = shoes_type
         context.user_data['awaiting_type'] = False
         context.user_data['awaiting_brand'] = True
-        response = f"Понял, ищем {shoes_type}. Какой бренд предпочитаете?\n\nДоступные бренды:\n• Nike\n• Adidas\n• Puma\n• Reebok\n• Любой бренд"
-        await update.message.reply_text(response)
+        response = f"Понял, ищем {shoes_type}. Какой бренд предпочитаете?"
+        await update.message.reply_text(response, reply_markup=get_brands_keyboard())
         save_dialog(update.effective_user.id, user_text, response)
         return
     
-    response = "Пожалуйста, уточните тип обуви: кроссовки, кеды, туфли или ботинки?"
-    await update.message.reply_text(response)
+    response = "Пожалуйста, выберите тип обуви с помощью кнопок: кроссовки, кеды, туфли или ботинки?"
+    await update.message.reply_text(response, reply_markup=get_types_keyboard())
 
 async def handle_brand(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
     user_text_lower = user_text.lower()
@@ -180,23 +283,31 @@ async def handle_brand(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
                 break
                 
     if brand:
-        context.user_data['brand'] = brand if brand != "Любой" else "Любой"
+        context.user_data['brand'] = brand
         context.user_data['awaiting_brand'] = False
         context.user_data['awaiting_price'] = True
         
-        response = f"Отлично, бренд: {brand}. На какой максимальный бюджет в рублях рассчитываете?\n(например: 15000, до 12000, любой)"
-        await update.message.reply_text(response)
+        response = f"Отлично, бренд: {brand}. На какой максимальный бюджет в рублях рассчитываете?\nВведите сумму текстом (например: 15000, до 12000) или нажмите кнопку:"
+        await update.message.reply_text(response, reply_markup=get_price_keyboard())
         save_dialog(update.effective_user.id, user_text, response)
         return
         
-    response = "Пожалуйста, выберите бренд из списка (Nike, Adidas, Puma, Reebok) или напишите 'Любой'."
-    await update.message.reply_text(response)
+    response = "Пожалуйста, выберите бренд из списка на кнопках или напишите 'Любой бренд'."
+    await update.message.reply_text(response, reply_markup=get_brands_keyboard())
 
 async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
-    max_price = parse_price(user_text)
+    user_text_lower = user_text.lower()
+    
+    if 'любой' in user_text_lower or 'все равно' in user_text_lower:
+        max_price = float('inf')
+    else:
+        max_price = parse_price(user_text)
     
     if max_price is None:
-        await update.message.reply_text("Не совсем понял сумму бюджета. Напишите, пожалуйста, числом (например, 15000 или 'любой').")
+        await update.message.reply_text(
+            "Не совсем понял сумму бюджета. Напишите, пожалуйста, числом (например, 15000) или нажмите 'Любой бюджет'.",
+            reply_markup=get_price_keyboard()
+        )
         return
         
     context.user_data['max_price'] = max_price
@@ -215,55 +326,84 @@ async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     
     if shoes_list:
         response = format_shoes_list(shoes_list)
-        response += "Вам нравится какой-нибудь вариант? (Да / Нет)"
+        response += "Вам нравится какой-нибудь вариант?"
         context.user_data['waiting_for_shoes_answer'] = True 
+        # Дадим кнопки Да/Нет для финала
+        final_keyboard = [['Да, супер! 🎉', 'Нет, не нравится ⬅️']]
+        await update.message.reply_text(response, reply_markup=ReplyKeyboardMarkup(final_keyboard, resize_keyboard=True))
     else:
-        response = "К сожалению, не нашёл обуви по Вашим критериям в базе.\n\nНапишите 'Хочу купить обувь', чтобы изменить параметры поиска!"
-        context.user_data.clear()
+        # ВОТ ЗДЕСЬ ИСПОЛЬЗУЕТСЯ ВАША ИДЕЯ: Не сбрасываем, а даем кнопку "Назад"
+        response = "К сожалению, не нашёл обуви по Вашим критериям в базе. 😔\n\nВы можете вернуться назад и изменить бюджет или бренд!"
+        context.user_data['waiting_for_failure'] = True
+        await update.message.reply_text(response, reply_markup=get_failure_keyboard())
         
-    await update.message.reply_text(response)
     save_dialog(update.effective_user.id, user_text, response)
 
 async def handle_answer_after_shoes(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
     user_text_lower = user_text.lower()
     intent = get_intent(user_text)
     
-    if intent == "yes" or user_text_lower in ["да", "давай", "давайте", "хорошо", "ага", "конечно", "нравится"]:
+    if intent == "yes" or "да" in user_text_lower or "супер" in user_text_lower:
         response = "Замечательно! 🎉 Вы сделали отличный выбор. Для оформления заказа перейдите по ссылке товара.\n\nЧем ещё я могу Вам помочь?"
         context.user_data.clear()  
-    elif intent == "no" or user_text_lower in ["нет", "не", "не нравится"]:
-        response = "Понял Вас. Давайте попробуем заново. Напишите 'Хочу купить обувь', чтобы изменить параметры поиска."
-        context.user_data.clear()
+        await update.message.reply_text(response, reply_markup=get_start_keyboard())
+    elif intent == "no" or "нет" in user_text_lower or "не нравится" in user_text_lower:
+        # Нажатие на "Нет" автоматически срабатывает как "Назад" к изменению бюджета
+        context.user_data['waiting_for_shoes_answer'] = False
+        context.user_data['awaiting_price'] = True
+        brand = context.user_data.get('brand', 'Любой')
+        response = f"Понял Вас. Давайте скорректируем цену. На какой максимальный бюджет рассчитываете для бренда {brand}?"
+        await update.message.reply_text(response, reply_markup=get_price_keyboard())
     else:
-        response = "Если захотите посмотреть другие модели — просто напишите 'Хочу купить обувь'."
+        response = "Если захотите посмотреть другие модели — нажмите кнопку ниже для главного меню."
         context.user_data.clear()
+        await update.message.reply_text(response, reply_markup=get_start_keyboard())
         
-    await update.message.reply_text(response)
     save_dialog(update.effective_user.id, user_text, response)
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from voice_utils import transcribe_voice, text_to_voice
+    from voice_utils import transcribe_voice
+    import os
     
     user_id = update.effective_user.id
     voice = update.message.voice
     
     await update.message.reply_text("Распознаю голос, подождите, пожалуйста...")
     
-    file = await context.bot.get_file(voice.file_id)
-    ogg_path = f"voice_{user_id}_{voice.file_unique_id}.ogg"
-    await file.download_to_drive(ogg_path)
-    
-    transcribed_text = transcribe_voice(ogg_path)
-    
-    if not transcribed_text or "Не удалось" in transcribed_text or "Ошибка" in transcribed_text:
-        await update.message.reply_text("Не удалось распознать речь. Попробуйте написать текстом или сказать чётче.")
-        return
+    # Создаем аккуратную папку для аудио прямо в проекте, если её нет
+    voice_dir = "temp_voice"
+    if not os.path.exists(voice_dir):
+        os.makedirs(voice_dir)
         
-    await update.message.reply_text(f"Вы сказали: {transcribed_text}")
+    ogg_path = os.path.join(voice_dir, f"voice_{user_id}_{voice.file_unique_id}.ogg")
     
-    # Подменяем текстовый ввод расшифрованным текстом и направляем в основной обработчик
-    update.message.text = transcribed_text
-    await handle_message(update, context)
+    try:
+        # Скачиваем файл в нашу папку
+        file = await context.bot.get_file(voice.file_id)
+        await file.download_to_drive(ogg_path)
+        
+        transcribed_text = transcribe_voice(ogg_path)
+        
+        if not transcribed_text or "Не удалось" in transcribed_text or "Ошибка" in transcribed_text:
+            await update.message.reply_text("Не удалось распознать речь. Попробуйте написать текстом или сказать чётче.")
+            return
+            
+        await update.message.reply_text(f"🎤 Вы сказали: {transcribed_text}")
+        
+        # Передаем текст в твой handle_message
+        context.user_data['voice_text_override'] = transcribed_text
+        await handle_message(update, context)
+        
+    finally:
+        # Подстраховка: принудительно удаляем ВСЕ файлы из temp_voice, чтобы не засорять проект
+        if os.path.exists(ogg_path):
+            try: os.remove(ogg_path)
+            except: pass
+            
+        wav_path = ogg_path.replace(".ogg", ".wav")
+        if os.path.exists(wav_path):
+            try: os.remove(wav_path)
+            except: pass
 
 def main():
     request_config = HTTPXRequest(proxy=None)
@@ -273,7 +413,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     
-    print("🚀 Обувной ИИ-Бот успешно запущен!")
+    print("🚀 Обувной ИИ-Бот с навигационными кнопками успешно запущен!")
     app.run_polling()
 
 if __name__ == '__main__':
