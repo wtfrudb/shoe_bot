@@ -6,6 +6,25 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 nltk.download('punkt', quiet=True)
 
+# Словарь для поиска точных подкатегорий во фразе пользователя
+SUBCATEGORY_MAPPING = {
+    "кроссовки": "Кроссовки", "кроссы": "Кроссовки", "беговые": "Кроссовки",
+    "кеды": "Кеды", "конверсы": "Кеды",
+    "слипоны": "Слипоны",
+    "туфли": "Туфли", "туфлях": "Туфли", "оксфорды": "Туфли",
+    "лоферы": "Лоферы",
+    "мокасины": "Мокасины",
+    "балетки": "Балетки", "балеточках": "Балетки",
+    "сапоги": "Сапоги", "сапожках": "Сапоги", "дутики": "Сапоги",
+    "ботильоны": "Ботильоны",
+    "ботинки": "Ботинки", "ботиночки": "Ботинки",
+    "казаки": "Казаки",
+    "босоножки": "Босоножки",
+    "сандалии": "Сандалии", "сандали": "Сандалии",
+    "сабо": "Сабо", "клоги": "Сабо",
+    "мюли": "Мюли"
+}
+
 BOT_CONFIG = {
     'intents': {
         'greeting': {
@@ -181,7 +200,6 @@ def clean_text(text):
     text = re.sub(r'[^\w\s]', '', text)
     return text.strip()
 
-
 X_text = []
 y = []
 
@@ -194,7 +212,6 @@ vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(2, 4))
 X = vectorizer.fit_transform(X_text)
 clf = LinearSVC(dual=False)
 clf.fit(X, y)
-
 
 dialogues_dataset = []
 
@@ -217,7 +234,6 @@ def load_dialogues():
             print(f"База болталки dialogues.txt успешно загружена! Пар: {len(dialogues_dataset)}")
     except Exception as e:
         print(f"Ошибка при загрузке dialogues.txt: {e}")
-
 
 load_dialogues()
 
@@ -254,6 +270,15 @@ def get_dialogue_fallback(text):
             break
             
     return best_match_answer
+
+# --- НОВАЯ ВСТРОЕННАЯ ФУНКЦИЯ ДЛЯ УМНОГО ПЕРЕХВАТА ОБУВИ ---
+def check_specific_shoe_request(text):
+    """Проверяет, упомянул ли пользователь конкретный тип обуви из словаря"""
+    t = text.lower()
+    for key, formal_name in SUBCATEGORY_MAPPING.items():
+        if key in t:
+            return formal_name
+    return None
 
 def process_message(text, allow_ad=False):
     intent = get_intent(text)

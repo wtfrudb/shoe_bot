@@ -244,9 +244,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     intent, auto_response = process_message(user_text, allow_ad=should_advertise)
     
-    if intent == "buy_shoes" or should_advertise:
+    if intent == "buy_shoes":
+        # Умный перехват названия обуви из фразы (например, "хочу купить туфли")
+        from nlp_utils import check_specific_shoe_request
+        detected_sub = check_specific_shoe_request(user_text)
+        
+        if detected_sub:
+            context.user_data['shoes_type'] = detected_sub
+            available_brands = get_available_brands_for_type(detected_sub)
+            
+            if available_brands:
+                context.user_data['awaiting_category'] = False
+                context.user_data['awaiting_subcategory'] = False
+                context.user_data['awaiting_brand'] = True  # Переводим сразу к брендам
+                
+                response = f"Понял, ищем {detected_sub.lower()}. Какому бренду отдаете предпочтение? (Я вывел только те, что сейчас есть в наличии):"
+                await update.message.reply_text(response, reply_markup=get_brands_keyboard(available_brands))
+                save_dialog(user_id, user_text, response)
+                return
+
+        # Если конкретная обувь во фразе не найдена, идем по стандартному шагу 1
         response = auto_response if should_advertise else "О, подбор обуви — это по моей части! 👟 Что именно ищете?"
         context.user_data['awaiting_category'] = True
+        await update.message.reply_text(response, reply_markup=get_categories_keyboard())
+        
+    elif should_advertise:
+        response = auto_response
+        context.user_data['awaiting_category'] = True 
         await update.message.reply_text(response, reply_markup=get_categories_keyboard())
     else:
         response = auto_response if auto_response else "Интересно! Расскажи подробнее?"
@@ -319,7 +343,7 @@ async def handle_brand(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         context.user_data['brand'] = brand
         context.user_data['awaiting_brand'] = False
         context.user_data['awaiting_price'] = True
-        response = f"Отлично, бренд: {brand}. На какой maximal бюджет в рублях рассчитываете?\nВведите сумму текстом (например: 15000, до 12000) или нажмите кнопку:"
+        response = f"Отлично, бренд: {brand}. На какой максимальный бюджет в рублях рассчитываете?\nВведите сумму текстом (например: 15000, до 12000) или нажмите кнопку:"
         await update.message.reply_text(response, reply_markup=get_price_keyboard())
         save_dialog(update.effective_user.id, user_text, response)
         return
@@ -369,25 +393,97 @@ async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         
     save_dialog(update.effective_user.id, user_text, response)
 
+def get_user_intent(text):
+    text = text.lower().strip()
+    
+    # Полный список твоих категорий обуви (с учетом возможных окончаний)
+    shoe_categories = [
+        "балетки", "босоножки", "ботильоны", "ботинки", "казаки", 
+        "кроссовки", "кеды", "лоферы", "мокасины", "сабо", 
+        "мюли", "сандалии", "сандали", "сапоги", "слипоны", "таби", "туфли"
+    ]
+    
+    # 1. Проверяем, названа ли какая-то категория из списка
+    has_category = any(category in text for category in shoe_categories)
+    
+    # Ключевые слова, указывающие на смену решения или новое желание
+    change_words = ["другой", "другие", "хочу", "купить", "искать", "выбрать", "поменяем"]
+    
+    # Если пользователь назвал категорию И при этом явно хочет что-то изменить/купить другое
+    if has_category and (any(word in text for word in change_words) or len(text.split()) <= 2):
+        return "change_category"
+        
+    # 2. Проверяем явный отказ (без упоминания новой обуви)
+    elif any(word in text for word in ["нет", "не нравится", "не то", "отмена", "другое", "заново"]):
+        return "decline"
+        
+    # 3. Проверяем согласие
+    elif any(word in text for word in ["да", "нравится", "оформляем", "беру", "отлично", "хорошо", "подходит"]):
+        return "approve"
+        
+    # Если пользователь сказал что-то невнятное
+    return "unknown"
+
+def extract_category(text):
+    """Вспомогательная функция: вытаскивает конкретное название обуви из текста"""
+    text = text.lower()
+    shoe_categories = [
+        "балетки", "босоножки", "ботильоны", "ботинки", "казаки", 
+        "кроссовки", "кеды", "лоферы", "мокасины", "сабо", 
+        "мюли", "сандалии", "сапоги", "слипоны", "таби", "туфли"
+    ]
+    for category in shoe_categories:
+        if category in text or (category[:-1] in text if len(category) > 4 else False): 
+            return category
+    return "обувь" # запасной вариант
+
 async def handle_answer_after_shoes(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
     user_text_lower = user_text.lower()
-    intent = get_intent(user_text)
     
-    if intent == "yes" or "да" in user_text_lower or "супер" in user_text_lower:
+    # Сначала вызываем проверку интента (функцию get_user_intent из прошлого сообщения)
+    intent = get_user_intent(user_text)
+    
+    # 1. ЕСЛИ ПОЛЬЗОВАТЕЛЬ ХОЧЕТ ДРУГУЮ КАТЕГОРИЮ (Например: "купить сандалии")
+    if intent == "change_category":
+        new_shoe = extract_category(user_text) # Вытаскиваем "сандалии" из текста
+        
+        # Записываем новую категорию в память бота
+        context.user_data['shoes_type'] = new_shoe
+        
+        # Переключаем флаги состояний: сбрасываем ожидание ответа по туфлям
+        context.user_data['waiting_for_shoes_answer'] = False
+        # Включаем ожидание бренда, так как мы пошли искать новую обувь
+        context.user_data['waiting_for_brand'] = True 
+        
+        response = f"Понял, переключаемся! Ищем {new_shoe}. Какому бренду отдаете предпочтение?"
+        
+        # Отправляем клавиатуру выбора бренда (замени get_brand_keyboard() на твою функцию клавиатуры брендов, если она называется иначе)
+        # Если кнопок брендов нет, можно просто убрать reply_markup
+        await update.message.reply_text(response) 
+        save_dialog(update.effective_user.id, user_text, response)
+        return
+
+    # 2. ЕСЛИ ПОЛЬЗОВАТЕЛЬ СОГЛАСЕН
+    elif intent == "approve" or "да" in user_text_lower or "супер" in user_text_lower:
         response = "Замечательно! 🎉 Вы сделали отличный выбор. Для оформления заказа перейдите по ссылке товара.\n\nЧем ещё я могу Вам помочь?"
         context.user_data.clear()  
         await update.message.reply_text(response, reply_markup=get_start_keyboard())
-    elif intent == "no" or "нет" in user_text_lower or "не нравится" in user_text_lower:
-        # ИСПРАВЛЕНО: Теперь этот блок ВСЕГДА железно сработает и выдаст новое разветвленное меню!
+        
+    # 3. ЕСЛИ ПОЛЬЗОВАТЕЛЬ ОТКАЗАЛСЯ (Просто "нет", без указания новой обуви)
+    elif intent == "decline" or "нет" in user_text_lower or "не нравится" in user_text_lower:
         context.user_data['waiting_for_shoes_answer'] = False
         context.user_data['awaiting_rejection_choice'] = True
         
         shoes_type = context.user_data.get('shoes_type', 'обувь')
         response = f"Принял! Модели из категории '{shoes_type}' не подошли. Что мы изменим, чтобы найти идеальную пару?"
         await update.message.reply_text(response, reply_markup=get_rejection_keyboard())
+        
+    # 4. ЕСЛИ БОТ ВООБЩЕ НЕ ПОНЯЛ ОТВЕТ
     else:
-        await update.message.reply_text("Пожалуйста, ответьте: 'Да, супер! 🎉' или 'Нет, не нравится ⬅️'", 
-                                        reply_markup=ReplyKeyboardMarkup([['Да, супер! 🎉', 'Нет, не нравится ⬅️']], resize_keyboard=True))
+        await update.message.reply_text(
+            "Пожалуйста, ответьте: 'Да, супер! 🎉' или 'Нет, не нравится ⬅️', либо скажите, какую другую обувь вы хотите найти.", 
+            reply_markup=ReplyKeyboardMarkup([['Да, супер! 🎉', 'Нет, не нравится ⬅️']], resize_keyboard=True)
+        )
         return
         
     save_dialog(update.effective_user.id, user_text, response)
