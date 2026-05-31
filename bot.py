@@ -202,22 +202,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_text_lower = user_text.lower().strip()
 
-    # 1. Умный счетчик сообщений
+    from telegram import ReplyKeyboardRemove
+
+    # 1. Умный счетчик сообщений и определение темы
     context.user_data['msg_count'] = context.user_data.get('msg_count', 0) + 1
     msg_count = context.user_data['msg_count']
     current_topic = context.user_data.get('last_topic', 'general')
     
-    # Если пользователь отказывается от предложений, даем ему "отдохнуть" от рекламы,
-    # уводя счетчик в минус
+    # Извлекаем последнее сообщение бота для памяти
+    last_bot_msg = context.user_data.get('last_bot_message', '')
+
+    # Определение флага показа рекламы
     if any(word in user_text_lower for word in ["нет", "не хочу", "не надо", "хватит"]):
         context.user_data['msg_count'] = -5 
         should_show_ad = False
     else:
-        # Логика: показываем рекламу, если прошло 4+ сообщений И тема "спорт" 
-        # ИЛИ если просто прошло много времени (10+ сообщений в любой теме)
         if (msg_count >= 4 and current_topic == 'sports') or (msg_count >= 10):
             should_show_ad = True
-            context.user_data['msg_count'] = 0  # Сбрасываем счетчик после рекламы!
+            context.user_data['msg_count'] = 0  
         else:
             should_show_ad = False
 
@@ -225,8 +227,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "в главное меню" in user_text_lower or user_text_lower == "/start":
         context.user_data.clear()
         response = "Вы вернулись в главное меню. Чем займемся?"
-        
-        from telegram import ReplyKeyboardRemove
         await update.message.reply_text("Очищаю меню...", reply_markup=ReplyKeyboardRemove())
         await update.message.reply_text(response, reply_markup=get_start_inline())
         save_dialog(user_id, user_text, response)
@@ -236,44 +236,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('awaiting_price_text'):
         max_price = parse_price(user_text)
         if max_price is None:
-            await update.message.reply_text("Не понял сумму. Введите числом (напр. 15000).")
+            await update.message.reply_text("Не понял сумму. Введите числом (напр. 15000).", reply_markup=get_main_keyboard())
             return
         context.user_data['max_price'] = max_price
         context.user_data['awaiting_price_text'] = False
         await process_final_search(update.message, context)
         return
 
-    # 4. БЛОК 2: Интеллектуальный анализ
-    intent, response = process_message(user_text, allow_ad=should_show_ad, topic=current_topic) 
+    # 4. БЛОК 2: Интеллектуальный анализ с ПЕРЕДАЧЕЙ ИСТОРИИ (last_bot_msg)
+    intent, response = process_message(
+        user_text, 
+        allow_ad=should_show_ad, 
+        topic=current_topic, 
+        last_bot_msg=last_bot_msg
+    )
 
-    # 5. Обновление контекста темы
-    if response:
-        r = response.lower()
-        if any(w in r for w in ["спорт", "волейбол", "футбол", "бег", "тренировка"]):
-            context.user_data['last_topic'] = 'sports'
-        elif any(w in r for w in ["кино", "фильм", "сериал", "книга", "аниме"]):
-            context.user_data['last_topic'] = 'movies'
-        # Запоминаем последний ответ бота
-        context.user_data['last_bot_message'] = response
-
-    # 6. БЛОК 3: Команда покупки
-    if intent == "buy_shoes":
+    # Логика перехода к покупке
+    buying_phrases = ["хочу купить", "купить обувь", "купить кроссовки", "подбор обуви", "выбрать обувь"]
+    if intent == "buy_shoes" or any(phrase in user_text_lower for phrase in buying_phrases):
         context.user_data.clear()
         await update.message.reply_text("Перехожу к подбору...", reply_markup=ReplyKeyboardRemove())
         await update.message.reply_text("О, подбор обуви — это по моей части! 👟 Какой ассортимент Вас интересует?", reply_markup=get_gender_inline())
         save_dialog(user_id, user_text, "Начал подбор обуви")
         return
 
-    # 7. БЛОК 4: Ответ пользователю
+    # 5. Обновление контекста темы и ЗАПОМИНАНИЕ ОТВЕТА
     if response:
-        await update.message.reply_text(response)
+        r = response.lower()
+        if any(w in r for w in ["спорт", "волейбол", "футбол", "бег", "тренировка"]):
+            context.user_data['last_topic'] = 'sports'
+        elif any(w in r for w in ["кино", "фильм", "сериал", "книга", "аниме"]):
+            context.user_data['last_topic'] = 'movies'
+        
+        # Сохраняем ответ, чтобы в следующий раз бот знал, что он уже сказал
+        context.user_data['last_bot_message'] = response
+
+    # 6. БЛОК 4: Ответ пользователю
+    if response:
+        await update.message.reply_text(response, reply_markup=get_main_keyboard())
         save_dialog(user_id, user_text, response)
         return
 
-    # 8. БЛОК 5: Заглушка
-    await update.message.reply_text("Интересно, расскажи подробнее!")
+    # 7. БЛОК 5: Заглушка
+    await update.message.reply_text("Интересно, расскажи подробнее!", reply_markup=get_main_keyboard())
     save_dialog(user_id, user_text, "Не понял")
-    
+        
 async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -412,8 +419,12 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     
     if data == "start_chat":
-        response = "С удовольствием поболтаю! Расскажи, как твои дела?"
-        await query.edit_message_text(response, reply_markup=None)
+        await query.answer()
+        # Сначала убираем старое инлайн-меню, если это необходимо, или сразу пишем:
+        await query.message.reply_text(
+            "С удовольствием поболтаю! Расскажи, как твои дела?", 
+            reply_markup=get_main_keyboard()  # <-- ТЕПЕРЬ КНОПКА ПОЯВИТСЯ МГНОВЕННО!
+        )
         return
 
 
