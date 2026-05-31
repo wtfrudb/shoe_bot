@@ -33,10 +33,18 @@ CATALOG = {
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- СТАРТОВАЯ КЛАВИАТУРА ---
-def get_start_keyboard():
-    return ReplyKeyboardMarkup([['👟 Подобрать обувь', '💬 Просто поболтать']], resize_keyboard=True)
+# --- ПОСТОЯННАЯ КЛАВИАТУРА ВНИЗУ ---
+def get_main_keyboard():
+    return ReplyKeyboardMarkup([['🏠 В главное меню']], resize_keyboard=True)
 
+# --- ГЕНЕРАЦИЯ ИНЛАЙН-КНОПОК ---
+
+def get_start_inline():
+    keyboard = [
+        [InlineKeyboardButton("👟 Подобрать обувь", callback_data="start_selection")],
+        [InlineKeyboardButton("💬 Просто поболтать", callback_data="start_chat")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 # --- ГЕНЕРАЦИЯ ИНЛАЙН-КНОПОК (ПОД СООБЩЕНИЯМИ) ---
 
@@ -104,15 +112,17 @@ def get_price_inline():
 def get_rejection_inline():
     keyboard = [
         [InlineKeyboardButton("🔄 Изменить бренд", callback_data="reject_brand"),
-         InlineKeyboardButton("🗂 Другая категория", callback_data="reject_cat")],
+         InlineKeyboardButton("💰 Изменить бюджет", callback_data="reject_price")], # Новая кнопка
+        [InlineKeyboardButton("🗂 Другая категория", callback_data="reject_cat")],
         [InlineKeyboardButton("🏠 В главное меню", callback_data="menu_main")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 def get_failure_inline():
     keyboard = [
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_brand"),
-         InlineKeyboardButton("🏠 В главное меню", callback_data="menu_main")]
+        [InlineKeyboardButton("⬅️ Назад к бренду", callback_data="back_to_brand"),
+         InlineKeyboardButton("💰 Изменить бюджет", callback_data="reject_price")],
+        [InlineKeyboardButton("🏠 В главное меню", callback_data="menu_main")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -171,7 +181,7 @@ def format_shoes_list(shoes_list):
         return None
     result = "Нашел для Вас отличные варианты: 🛍\n\n"
     for item in shoes_list:
-        result += f"• **{item[0]}**\n  Бренд: {item[5]}\n  Стоимость: {item[2]}\n  Описание: {item[3]}\n  Ссылка: {item[6]}\n\n"
+        result += f"• {item[0]}\n  Бренд: {item[5]}\n  Стоимость: {item[2]}\n  Описание: {item[3]}\n  Ссылка: {item[6]}\n\n"
     return result
 
 
@@ -180,7 +190,7 @@ def format_shoes_list(shoes_list):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     response = "Привет! Я бот-помощник магазина обуви. 👟\n\nЧем вы хотите заняться? Выберите действие ниже:"
-    await update.message.reply_text(response, reply_markup=get_start_keyboard())
+    await update.message.reply_text(response, reply_markup=get_start_inline())
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = context.user_data.pop('voice_text_override', update.message.text)
@@ -191,7 +201,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "в главное меню" in user_text_lower or user_text_lower == "/start":
         context.user_data.clear()
         response = "Вы вернулись в главное меню. Чем займемся?"
-        await update.message.reply_text(response, reply_markup=get_start_keyboard())
+        await update.message.reply_text(response, reply_markup=get_start_inline())
         save_dialog(user_id, user_text, response)
         return
 
@@ -244,14 +254,20 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     data = query.data
 
-    # Кнопка: Главное меню
     if data == "menu_main":
         context.user_data.clear()
         response = "Вы вернулись в главное меню. Чем займемся?"
-        # ВОЗВРАЩАЕМ текстовую клавиатуру
-        await query.message.reply_text(response, reply_markup=get_start_keyboard())
+        # Убираем старую клавиатуру и не ставим новую (ReplyKeyboardRemove)
+        await query.message.reply_text(response, reply_markup=ReplyKeyboardRemove())
         return
 
+    if data == "start_selection":
+        # Активируем кнопку внизу только здесь
+        await query.message.reply_text("Переходим к подбору:", reply_markup=get_main_keyboard())
+        # И сразу вызываем первый шаг
+        await query.message.reply_text("Какой ассортимент Вас интересует?", reply_markup=get_gender_inline())
+        return
+    
     # Шаг 1: Выбор Пола
     if data.startswith("gender_"):
         gender_map = {"gender_male": "Мужская обувь", "gender_female": "Женская обувь"}
@@ -332,12 +348,19 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['awaiting_price_text'] = False
         await process_final_search(query.message, context, edit_mode=True)
         return
+    
+    # Обработка уточнения цены после отказа
+    if data == "reject_price":
+        context.user_data['awaiting_price_text'] = True
+        response = "Хорошо, давайте изменим бюджет. На какую максимальную сумму рассчитываете? (Введите числом или выберите кнопку)"
+        await query.message.reply_text(response, reply_markup=get_price_inline())
+        return
 
     # Шаги Финала: Одобрение или отказ
     if data == "shoes_yes":
         response = "Замечательно! 🎉 Вы сделали отличный выбор. Для оформления заказа перейдите по ссылкам у товаров.\n\nЧем ещё я могу Вам помочь?"
         context.user_data.clear()
-        await query.message.reply_text(response, reply_markup=get_start_keyboard())
+        await query.message.reply_text(response, reply_markup=get_start_inline())
         return
 
     if data == "shoes_no":
