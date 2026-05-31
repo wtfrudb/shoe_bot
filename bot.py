@@ -2,6 +2,7 @@ import logging
 import sqlite3
 import random
 import re
+import os
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from nlp_utils import process_message, get_intent
@@ -18,6 +19,14 @@ BRANDS = {
     'reebok': 'Reebok', 'рибок': 'Reebok', 'рибук': 'Reebok'
 }
 
+# Справочник двухуровневого каталога
+CATEGORIES = {
+    "Кроссовки и кеды": ["Кроссовки", "Кеды", "Слипоны"],
+    "Туфли": ["Туфли", "Лоферы", "Мокасины", "Балетки"],
+    "Сапоги и ботинки": ["Сапоги", "Ботильоны", "Ботинки", "Казаки"],
+    "Босоножки и сандалии": ["Босоножки", "Сандалии", "Сабо", "Мюли"]
+}
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -30,30 +39,45 @@ def get_start_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_types_keyboard():
-    """Выбор типа обуви"""
+def get_categories_keyboard():
+    """Шаг 1: Выбор укрупненной категории обуви"""
     keyboard = [
-        ['Кроссовки', 'Кеды'],
-        ['Туфли', 'Ботинки'],
+        ['Кроссовки и кеды', 'Туфли'],
+        ['Сапоги и ботинки', 'Босоножки и сандалии'],
         ['🏠 В главное меню']
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_brands_keyboard(available_brands):
-    """Генерирует кнопки ТОЛЬКО для тех брендов, которые реально есть в БД для этого типа обуви"""
+def get_subcategories_keyboard(category_name):
+    """Шаг 2: Выбор конкретной подкатегории на основе выбранной категории"""
+    subcategories = CATEGORIES.get(category_name, [])
     keyboard = []
     row = []
     
-    # Добавляем только существующие бренды по 2 штуки в ряд
-    for brand in available_brands:
-        row.append(brand.capitalize()) # Делаем красивую первую заглавную букву (Nike, Adidas)
+    for sub in subcategories:
+        row.append(sub)
         if len(row) == 2:
             keyboard.append(row)
             row = []
-    if row: # Если остался один бренд без пары
+    if row:
         keyboard.append(row)
         
-    # Добавляем системные кнопки управления
+    keyboard.append(['⬅️ Назад', '🏠 В главное меню'])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_brands_keyboard(available_brands):
+    """Шаг 3: Генерирует кнопки ТОЛЬКО для тех брендов, которые реально есть в БД для этой подкатегории"""
+    keyboard = []
+    row = []
+    
+    for brand in available_brands:
+        row.append(brand.capitalize())
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+        
     keyboard.append(['Любой бренд'])
     keyboard.append(['⬅️ Назад', '🏠 В главное меню'])
     
@@ -118,16 +142,14 @@ def search_shoes(shoes_type=None, brand=None, max_price=None):
     return shoes
 
 def get_available_brands_for_type(shoes_type):
-    """Возвращает список брендов, которые физически есть в базе для данного типа обуви"""
+    """Возвращает список брендов, которые физически есть в базе для данной подкатегории"""
     conn = sqlite3.connect('shoe_shop.db')
     cur = conn.cursor()
     
-    # DISTINCT вытащит только уникальные названия брендов без повторов
     query = "SELECT DISTINCT brand FROM shoes WHERE LOWER(shoes_type) = ?"
     
     try:
         cur.execute(query, (shoes_type.lower(),))
-        # Сворачиваем кортежи в плоский список строк и убираем пустые, если есть
         brands = [row[0] for row in cur.fetchall() if row[0]]
     except Exception as e:
         logger.error(f"Ошибка при получении брендов: {e}")
@@ -173,35 +195,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_dialog(user_id, user_text, response)
         return
 
-    # Логика обработки кнопки "Назад" (ОБНОВЛЕННАЯ С ДИНАМИЧЕСКИМИ КНОПКАМИ)
+    # Логика обработки кнопки "Назад" (С учетом категорий и подкатегорий)
     if "назад" in user_text_lower or "⬅️" in user_text_lower:
-        if context.user_data.get('awaiting_brand'):
-            # Назад с выбора бренда -> на выбор типа обуви
+        if context.user_data.get('awaiting_subcategory'):
+            # Назад с подкатегорий -> на выбор больших категорий
+            context.user_data['awaiting_subcategory'] = False
+            context.user_data['awaiting_category'] = True
+            response = "Хорошо, давайте вернемся к категориям. Что ищем?"
+            await update.message.reply_text(response, reply_markup=get_categories_keyboard())
+            return
+            
+        elif context.user_data.get('awaiting_brand'):
+            # Назад с выбора бренда -> на выбор подкатегорий
             context.user_data['awaiting_brand'] = False
-            context.user_data['awaiting_type'] = True
-            response = "Хорошо, давайте вернемся назад. Что именно ищете: кроссовки, кеды, туфли или ботинки?"
-            await update.message.reply_text(response, reply_markup=get_types_keyboard())
+            context.user_data['awaiting_subcategory'] = True
+            category = context.user_data.get('current_category')
+            response = f"Возвращаемся к подкатегориям для '{category}':"
+            await update.message.reply_text(response, reply_markup=get_subcategories_keyboard(category))
             return
             
         elif context.user_data.get('awaiting_price') or context.user_data.get('waiting_for_failure'):
-            # Назад с ввода цены ИЛИ после ошибки поиска -> на выбор бренда
+            # Назад с цены -> на выбор бренда (с динамическими кнопками подкатегории)
             context.user_data['awaiting_price'] = False
             context.user_data['waiting_for_failure'] = False
             context.user_data['awaiting_brand'] = True
-            
-            # Узнаем, какой тип обуви искал пользователь (если пусто, по умолчанию 'кроссовки')
             shoes_type = context.user_data.get('shoes_type', 'кроссовки')
             
-            # ТУТ ПРИМЕНЯЕТСЯ ДИНАМИЧЕСКИЙ ВЫБОР: получаем бренды из БД для этого типа
             available_brands = get_available_brands_for_type(shoes_type)
-            
-            response = f"Возвращаемся к выбору бренда для категории '{shoes_type}':"
-            # Передаем список брендов в функцию генерации клавиатуры
+            response = f"Возвращаемся к выбору бренда для '{shoes_type}':"
             await update.message.reply_text(response, reply_markup=get_brands_keyboard(available_brands))
             return
             
         elif context.user_data.get('waiting_for_shoes_answer'):
-            # Назад от финального вопроса "нравится ли" -> на ввод стоимости
+            # Назад от финала -> на ввод стоимости
             context.user_data['waiting_for_shoes_answer'] = False
             context.user_data['awaiting_price'] = True
             brand = context.user_data.get('brand', 'Любой')
@@ -223,8 +249,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 2. ПЕРЕХВАТ ТЕКУЩИХ ШАГОВ ПОДБОРА ОБУВИ
-    if context.user_data.get('awaiting_type'):
-        await handle_shoes_type(update, context, user_text)
+    if context.user_data.get('awaiting_category'):
+        await handle_category_selection(update, context, user_text)
+        return
+    if context.user_data.get('awaiting_subcategory'):
+        await handle_subcategory_selection(update, context, user_text)
         return
     if context.user_data.get('awaiting_brand'):
         await handle_brand(update, context, user_text)
@@ -242,8 +271,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 3. ОБРАБОТКА СТАРТОВЫХ КНОПОК ИЛИ ОБЫЧНОГО ТЕКСТА (БОЛТАЛКА)
     if "подобрать обувь" in user_text_lower or "купить обувь" in user_text_lower or "подбор" in user_text_lower:
         response = "О, подбор обуви — это по моей части! 👟 Что именно ищете?"
-        context.user_data['awaiting_type'] = True
-        await update.message.reply_text(response, reply_markup=get_types_keyboard())
+        context.user_data['awaiting_category'] = True
+        await update.message.reply_text(response, reply_markup=get_categories_keyboard())
         save_dialog(user_id, user_text, response)
         return
 
@@ -264,12 +293,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if intent == "buy_shoes":
         response = "О, подбор обуви — это по моей части! 👟 Что именно ищете?"
-        context.user_data['awaiting_type'] = True
-        await update.message.reply_text(response, reply_markup=get_types_keyboard())
+        context.user_data['awaiting_category'] = True
+        await update.message.reply_text(response, reply_markup=get_categories_keyboard())
     elif should_advertise:
         response = auto_response
-        context.user_data['awaiting_type'] = True 
-        await update.message.reply_text(response, reply_markup=get_types_keyboard())
+        context.user_data['awaiting_category'] = True 
+        await update.message.reply_text(response, reply_markup=get_categories_keyboard())
     else:
         response = auto_response if auto_response else "Интересно! Расскажи подробнее?"
         await update.message.reply_text(response)
@@ -279,47 +308,55 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ПОШАГОВЫЕ ОБРАБОТЧИКИ ---
 
-async def handle_shoes_type(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
-    user_text_lower = user_text.lower()
-    
-    type_map = {
-        'кроссовки': 'кроссовки', 'кроссы': 'кроссовки', 'sneakers': 'кроссовки',
-        'кеды': 'кеды', 'shoes': 'кеды',
-        'туфли': 'туфли', 'лоферы': 'туфли', 'каблуки': 'туфли',
-        'ботинки': 'ботинки', 'сапоги': 'ботинки', 'челси': 'ботинки'
-    }
-    
-    shoes_type = None
-    for key, value in type_map.items():
-        if key in user_text_lower:
-            shoes_type = value
+async def handle_category_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
+    chosen_category = None
+    for cat in CATEGORIES.keys():
+        if cat.lower() in user_text.lower():
+            chosen_category = cat
             break
             
-    if shoes_type:
-        # Сохраняем выбор типа обуви
-        context.user_data['shoes_type'] = shoes_type
+    if chosen_category:
+        context.user_data['current_category'] = chosen_category
+        context.user_data['awaiting_category'] = False
+        context.user_data['awaiting_subcategory'] = True
         
-        # УЗНАЕМ, КАКИЕ БРЕНДЫ ЕСТЬ В БАЗЕ ДЛЯ ЭТОГО ТИПА
-        available_brands = get_available_brands_for_type(shoes_type)
+        response = f"Отлично! Категория '{chosen_category}'. Уточните, что именно вы ищете:"
+        await update.message.reply_text(response, reply_markup=get_subcategories_keyboard(chosen_category))
+        save_dialog(update.effective_user.id, user_text, response)
+        return
+        
+    await update.message.reply_text("Пожалуйста, выберите категорию из предложенных кнопок.", reply_markup=get_categories_keyboard())
+
+async def handle_subcategory_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
+    category = context.user_data.get('current_category')
+    subcategories = CATEGORIES.get(category, [])
+    
+    chosen_sub = None
+    for sub in subcategories:
+        if sub.lower() in user_text.lower():
+            chosen_sub = sub
+            break
+            
+    if chosen_sub:
+        context.user_data['shoes_type'] = chosen_sub 
+        
+        # Динамически вытаскиваем бренды из БД именно для этой подкатегории
+        available_brands = get_available_brands_for_type(chosen_sub)
         
         if not available_brands:
-            # Если вдруг в базе вообще нет обуви этого типа
-            response = f"К сожалению, в данный момент категории '{shoes_type}' нет в наличии. Выберите что-то другое:"
-            await update.message.reply_text(response, reply_markup=get_types_keyboard())
+            response = f"К сожалению, моделей из подкатегории '{chosen_sub}' сейчас нет в базе. Выберите другую подкатегорию:"
+            await update.message.reply_text(response, reply_markup=get_subcategories_keyboard(category))
             return
             
-        context.user_data['awaiting_type'] = False
+        context.user_data['awaiting_subcategory'] = False
         context.user_data['awaiting_brand'] = True
         
-        response = f"Понял, ищем {shoes_type}. Какому бренду отдаете предпочтение? (Я вывел только те, что сейчас есть в наличии):"
-        
-        # Передаем список брендов в нашу новую функцию кнопок!
+        response = f"Ищем {chosen_sub.lower()}. Какой бренд предпочитаете? (Выведены доступные в базе):"
         await update.message.reply_text(response, reply_markup=get_brands_keyboard(available_brands))
         save_dialog(update.effective_user.id, user_text, response)
         return
-    
-    response = "Пожалуйста, выберите тип обуви с помощью кнопок: кроссовки, кеды, туфли или ботинки?"
-    await update.message.reply_text(response, reply_markup=get_types_keyboard())
+        
+    await update.message.reply_text("Пожалуйста, выберите вариант из списка на кнопках.", reply_markup=get_subcategories_keyboard(category))
 
 async def handle_brand(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
     user_text_lower = user_text.lower()
@@ -343,8 +380,10 @@ async def handle_brand(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         save_dialog(update.effective_user.id, user_text, response)
         return
         
+    shoes_type = context.user_data.get('shoes_type', 'кроссовки')
+    available_brands = get_available_brands_for_type(shoes_type)
     response = "Пожалуйста, выберите бренд из списка на кнопках или напишите 'Любой бренд'."
-    await update.message.reply_text(response, reply_markup=get_brands_keyboard())
+    await update.message.reply_text(response, reply_markup=get_brands_keyboard(available_brands))
 
 async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
     user_text_lower = user_text.lower()
@@ -364,7 +403,6 @@ async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     context.user_data['max_price'] = max_price
     context.user_data['awaiting_price'] = False
     
-    # Запускаем поиск в БД
     brand_filter = context.user_data.get('brand')
     if brand_filter == "Любой":
         brand_filter = None
@@ -379,11 +417,9 @@ async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         response = format_shoes_list(shoes_list)
         response += "Вам нравится какой-нибудь вариант?"
         context.user_data['waiting_for_shoes_answer'] = True 
-        # Дадим кнопки Да/Нет для финала
         final_keyboard = [['Да, супер! 🎉', 'Нет, не нравится ⬅️']]
         await update.message.reply_text(response, reply_markup=ReplyKeyboardMarkup(final_keyboard, resize_keyboard=True))
     else:
-        # ВОТ ЗДЕСЬ ИСПОЛЬЗУЕТСЯ ВАША ИДЕЯ: Не сбрасываем, а даем кнопку "Назад"
         response = "К сожалению, не нашёл обуви по Вашим критериям в базе. 😔\n\nВы можете вернуться назад и изменить бюджет или бренд!"
         context.user_data['waiting_for_failure'] = True
         await update.message.reply_text(response, reply_markup=get_failure_keyboard())
@@ -399,7 +435,6 @@ async def handle_answer_after_shoes(update: Update, context: ContextTypes.DEFAUL
         context.user_data.clear()  
         await update.message.reply_text(response, reply_markup=get_start_keyboard())
     elif intent == "no" or "нет" in user_text_lower or "не нравится" in user_text_lower:
-        # Нажатие на "Нет" автоматически срабатывает как "Назад" к изменению бюджета
         context.user_data['waiting_for_shoes_answer'] = False
         context.user_data['awaiting_price'] = True
         brand = context.user_data.get('brand', 'Любой')
@@ -414,14 +449,12 @@ async def handle_answer_after_shoes(update: Update, context: ContextTypes.DEFAUL
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from voice_utils import transcribe_voice
-    import os
     
     user_id = update.effective_user.id
     voice = update.message.voice
     
     await update.message.reply_text("Распознаю голос, подождите, пожалуйста...")
     
-    # Создаем аккуратную папку для аудио прямо в проекте, если её нет
     voice_dir = "temp_voice"
     if not os.path.exists(voice_dir):
         os.makedirs(voice_dir)
@@ -429,7 +462,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ogg_path = os.path.join(voice_dir, f"voice_{user_id}_{voice.file_unique_id}.ogg")
     
     try:
-        # Скачиваем файл в нашу папку
         file = await context.bot.get_file(voice.file_id)
         await file.download_to_drive(ogg_path)
         
@@ -441,12 +473,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         await update.message.reply_text(f"🎤 Вы сказали: {transcribed_text}")
         
-        # Передаем текст в твой handle_message
         context.user_data['voice_text_override'] = transcribed_text
         await handle_message(update, context)
         
     finally:
-        # Подстраховка: принудительно удаляем ВСЕ файлы из temp_voice, чтобы не засорять проект
         if os.path.exists(ogg_path):
             try: os.remove(ogg_path)
             except: pass
