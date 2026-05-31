@@ -41,8 +41,11 @@ def get_main_keyboard():
 
 def get_start_inline():
     keyboard = [
-        [InlineKeyboardButton("👟 Подобрать обувь", callback_data="start_selection")],
-        [InlineKeyboardButton("💬 Просто поболтать", callback_data="start_chat")]
+        [
+            # ИСПРАВЛЕНО: callback_data теперь совпадает с тем, что ждет обработчик
+            InlineKeyboardButton("👟 Подобрать обувь", callback_data="start_selection"),
+            InlineKeyboardButton("💬 Просто поболтать", callback_data="start_chat")
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -112,7 +115,7 @@ def get_price_inline():
 def get_rejection_inline():
     keyboard = [
         [InlineKeyboardButton("🔄 Изменить бренд", callback_data="reject_brand"),
-         InlineKeyboardButton("💰 Изменить бюджет", callback_data="reject_price")], # Новая кнопка
+         InlineKeyboardButton("💰 Изменить бюджет", callback_data="reject_price")], 
         [InlineKeyboardButton("🗂 Другая категория", callback_data="reject_cat")],
         [InlineKeyboardButton("🏠 В главное меню", callback_data="menu_main")]
     ]
@@ -189,6 +192,8 @@ def format_shoes_list(shoes_list):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
+    # ИСПРАВЛЕНО: удаляем старую клавиатуру при старте
+    await update.message.reply_text("Запускаю меню...", reply_markup=ReplyKeyboardRemove())
     response = "Привет! Я бот-помощник магазина обуви. 👟\n\nЧем вы хотите заняться? Выберите действие ниже:"
     await update.message.reply_text(response, reply_markup=get_start_inline())
 
@@ -196,57 +201,79 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = context.user_data.pop('voice_text_override', update.message.text)
     user_id = update.effective_user.id
     user_text_lower = user_text.lower().strip()
+
+    # 1. Умный счетчик сообщений
+    context.user_data['msg_count'] = context.user_data.get('msg_count', 0) + 1
+    msg_count = context.user_data['msg_count']
+    current_topic = context.user_data.get('last_topic', 'general')
     
-    # 1. ПЕРЕХВАТ КОМАНДЫ ГЛАВНОГО МЕНЮ
+    # Если пользователь отказывается от предложений, даем ему "отдохнуть" от рекламы,
+    # уводя счетчик в минус
+    if any(word in user_text_lower for word in ["нет", "не хочу", "не надо", "хватит"]):
+        context.user_data['msg_count'] = -5 
+        should_show_ad = False
+    else:
+        # Логика: показываем рекламу, если прошло 4+ сообщений И тема "спорт" 
+        # ИЛИ если просто прошло много времени (10+ сообщений в любой теме)
+        if (msg_count >= 4 and current_topic == 'sports') or (msg_count >= 10):
+            should_show_ad = True
+            context.user_data['msg_count'] = 0  # Сбрасываем счетчик после рекламы!
+        else:
+            should_show_ad = False
+
+    # 2. БЛОК 0: Системные команды
     if "в главное меню" in user_text_lower or user_text_lower == "/start":
         context.user_data.clear()
         response = "Вы вернулись в главное меню. Чем займемся?"
+        
+        from telegram import ReplyKeyboardRemove
+        await update.message.reply_text("Очищаю меню...", reply_markup=ReplyKeyboardRemove())
         await update.message.reply_text(response, reply_markup=get_start_inline())
         save_dialog(user_id, user_text, response)
         return
 
-    # 2. ПЕРЕХВАТ ЗАПРОСА НА ПОДБОР ОБУВИ
-    if "подобрать обувь" in user_text_lower or "купить обувь" in user_text_lower or "подбор" in user_text_lower:
-        context.user_data.clear()
-        response = "О, подбор обуви — это по моей части! 👟 Какой ассортимент Вас интересует?"
-        # СКРЫВАЕМ клавиатуру перед выводом инлайна
-        await update.message.reply_text("Перехожу к подбору...", reply_markup=ReplyKeyboardRemove())
-        await update.message.reply_text(response, reply_markup=get_gender_inline())
-        save_dialog(user_id, user_text, response)
-        return
-
-    # 3. ОЖИДАНИЕ ЦЕНЫ ТЕКСТОМ
+    # 3. БЛОК 1: Техническое состояние (ожидание цены)
     if context.user_data.get('awaiting_price_text'):
         max_price = parse_price(user_text)
         if max_price is None:
-            await update.message.reply_text("Не понял сумму. Введите числом (напр. 15000) или нажмите 'Любой бюджет' под сообщением выше.")
+            await update.message.reply_text("Не понял сумму. Введите числом (напр. 15000).")
             return
         context.user_data['max_price'] = max_price
         context.user_data['awaiting_price_text'] = False
         await process_final_search(update.message, context)
         return
 
-    if "просто поболтать" in user_text_lower:
-        await update.message.reply_text("С удовольствием поболтаю! Расскажи, как твои дела?")
-        return
+    # 4. БЛОК 2: Интеллектуальный анализ
+    intent, response = process_message(user_text, allow_ad=should_show_ad, topic=current_topic) 
 
-    # 4. ИИ-БОЛТАЛКА
-    intent, auto_response = process_message(user_text, allow_ad=False)
-    
+    # 5. Обновление контекста темы
+    if response:
+        r = response.lower()
+        if any(w in r for w in ["спорт", "волейбол", "футбол", "бег", "тренировка"]):
+            context.user_data['last_topic'] = 'sports'
+        elif any(w in r for w in ["кино", "фильм", "сериал", "книга", "аниме"]):
+            context.user_data['last_topic'] = 'movies'
+        # Запоминаем последний ответ бота
+        context.user_data['last_bot_message'] = response
+
+    # 6. БЛОК 3: Команда покупки
     if intent == "buy_shoes":
         context.user_data.clear()
-        response = "О, подбор обуви — это по моей части! 👟 Какой ассортимент Вас интересует?"
         await update.message.reply_text("Перехожу к подбору...", reply_markup=ReplyKeyboardRemove())
-        await update.message.reply_text(response, reply_markup=get_gender_inline())
-    else:
-        response = auto_response if auto_response else "Интересно, расскажи подробнее!"
+        await update.message.reply_text("О, подбор обуви — это по моей части! 👟 Какой ассортимент Вас интересует?", reply_markup=get_gender_inline())
+        save_dialog(user_id, user_text, "Начал подбор обуви")
+        return
+
+    # 7. БЛОК 4: Ответ пользователю
+    if response:
         await update.message.reply_text(response)
-        
-    save_dialog(user_id, user_text, response)
+        save_dialog(user_id, user_text, response)
+        return
 
-
-# --- ГЛАВНЫЙ ОБРАБОТЧИК ДЛЯ ВСЕХ INLINE-КНОПОК ---
-
+    # 8. БЛОК 5: Заглушка
+    await update.message.reply_text("Интересно, расскажи подробнее!")
+    save_dialog(user_id, user_text, "Не понял")
+    
 async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -259,6 +286,7 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         response = "Вы вернулись в главное меню. Чем займемся?"
         # Убираем старую клавиатуру и не ставим новую (ReplyKeyboardRemove)
         await query.message.reply_text(response, reply_markup=ReplyKeyboardRemove())
+        await query.message.reply_text("Выберите действие:", reply_markup=get_start_inline())
         return
 
     if data == "start_selection":
@@ -381,6 +409,11 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "reject_cat":
         response = "Давайте начнем сначала. Какой ассортимент Вас интересует?"
         await query.message.reply_text(response, reply_markup=get_gender_inline())
+        return
+    
+    if data == "start_chat":
+        response = "С удовольствием поболтаю! Расскажи, как твои дела?"
+        await query.edit_message_text(response, reply_markup=None)
         return
 
 
