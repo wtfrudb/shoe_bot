@@ -1,99 +1,50 @@
 import sqlite3
 import os
 
-# Удаляем старую базу данных обуви, если она существовала
 if os.path.exists('shoe_shop.db'):
     os.remove('shoe_shop.db')
 
 conn = sqlite3.connect('shoe_shop.db')
 cursor = conn.cursor()
 
-# 1. Создаем таблицу истории диалогов
-cursor.execute('''
-    CREATE TABLE conversations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
-        user_message TEXT,
-        bot_answer TEXT,
-        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-''')
+# 1. Таблица истории (без изменений)
+cursor.execute('''CREATE TABLE conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    user_message TEXT,
+    bot_answer TEXT,
+    date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)''')
 
-# 2. Создаем таблицу для ОБУВИ (Добавлена колонка gender)
-cursor.execute('''
-    CREATE TABLE shoes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        price REAL,
-        price_text TEXT,
-        description TEXT,
-        shoes_type TEXT,
-        brand TEXT,
-        url TEXT,
-        gender TEXT
-    )
-''')
+# 2. Таблица моделей (только общая информация)
+cursor.execute('''CREATE TABLE shoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    description TEXT,
+    shoes_type TEXT,
+    brand TEXT,
+    gender TEXT
+)''')
 
-# 3. Наполняем базу данных с разделением по ПОЛУ (Добавлен параметр 'мужской' / 'женский')
-shoes_data = [
-    # === МУЖСКАЯ ОБУВЬ ===
-    # Кроссовки и кеды (Мужские)
-    ('Nike Air Force 1 07 (Men)', 13990.0, '13 990 руб.', 'Легендарные баскетбольные кроссовки. Белая классика на все времена с технологией амортизации Air.', 'кроссовки', 'Nike', 'https://www.nike.com', 'мужской'),
-    ('Adidas Ultraboost 1.0 (Men)', 18900.0, '18 900 руб.', 'Премиальные кроссовки для бега и ходьбы. Мягкий вязаный верх Primeknit и легендарная подошва Boost.', 'кроссовки', 'Adidas', 'https://www.adidas.com', 'мужской'),
-    ('Puma RS-X Efekt (Men)', 11800.0, '11 800 руб.', 'Массивные футуристичные кроссовки из комбинации сетки и замши. Яркий дизайн в стиле ретро-футуризма.', 'кроссовки', 'Puma', 'https://www.puma.com', 'мужской'),
-    ('Adidas Superstar (Men)', 11500.0, '11 500 руб.', 'Знаменитые мужские кеды с кожаным верхом и прорезиненным мыском-ракушкой. Икона уличной моды.', 'кеды', 'Adidas', 'https://www.adidas.com', 'мужской'),
-    ('Nike SB Chron 2 Slip', 7490.0, '7 490 руб.', 'Легкие текстильные слипоны для скейтбординга и повседневной ходьбы. Удобная посадка без шнурков.', 'слипоны', 'Nike', 'https://www.nike.com', 'мужской'),
-    
-    # Туфли и лоферы (Мужские)
-    ('Nike Cole Haan Grand Oxford', 19500.0, '19 500 руб.', 'Классические мужские туфли-оксфорды со скрытой технологией беговой амортизации Nike Air в подошве.', 'туфли', 'Nike', 'https://www.nike.com', 'мужской'),
-    ('Puma Palermo Loafer', 14990.0, '14 990 руб.', 'Трендовые кожаные лоферы на базе силуэта Palermo. Элегантный стиль, совмещенный со спортивной подошвой.', 'лоферы', 'Puma', 'https://www.puma.com', 'мужской'),
-    ('Puma Suede Moc V', 11200.0, '11 200 руб.', 'Стильные повседневные мокасины из натуральной ультра-мягкой замши со знаковым силуэтом Puma Suede.', 'мокасины', 'Puma', 'https://www.puma.com', 'мужской'),
-    
-    # Сапоги и ботинки (Мужские)
-    ('Puma Desierto v3 Rubber', 14500.0, '14 500 руб.', 'Высокие зимние ботинки с водонепроницаемой мембраной PureTex, теплой подкладкой и зимним протектором.', 'ботинки', 'Puma', 'https://www.puma.com', 'мужской'),
-    ('Adidas Terrex Conrax BOA', 24000.0, '24 000 руб.', 'Технологичные хайкинговые ботинки. Утеплитель PrimaLoft, мембрана RAIN.RDY и быстрая фиксация BOA.', 'ботинки', 'Adidas', 'https://www.adidas.com', 'мужской'),
-    ('Adidas Originals Western Strider', 28900.0, '28 900 руб.', 'Лимитированные ковбойские сапоги-казаки со скошенным каблуком, выполненные из премиальной фактурной кожи.', 'казаки', 'Adidas', 'https://www.adidas.com', 'мужской'),
-    
-    # Сандалии (Мужские)
-    ('Adidas Cyprex Ultra II', 7990.0, '7 990 руб.', 'Надежные туристические сандалии для активного отдыха у воды и прогулок в жаркие летние дни.', 'сандалии', 'Adidas', 'https://www.adidas.com', 'мужской'),
+# 3. Вариации (Цвета + Ссылка на картинку для этого цвета)
+cursor.execute('''CREATE TABLE shoe_variants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shoe_id INTEGER,
+    color_name TEXT,
+    image_url TEXT,
+    price REAL,
+    FOREIGN KEY(shoe_id) REFERENCES shoes(id)
+)''')
 
-
-    # === ЖЕНСКАЯ ОБУВЬ ===
-    # Кроссовки и кеды (Женские)
-    ('Nike Air Max 90 (Women)', 16500.0, '16 500 руб.', 'Культовый беговой силуэт из 90-х. Женская расцветка, легендарный комфорт и видимый воздушный баллон.', 'кроссовки', 'Nike', 'https://www.nike.com', 'женский'),
-    ('Reebok Classic Leather (Women)', 9490.0, '9 490 руб.', 'Мягкая натуральная кожа белого цвета и лаконичный силуэт. Идеальная женская базовая пара на каждый день.', 'кроссовки', 'Reebok', 'https://www.reebok.com', 'женский'),
-    ('Puma Club Nylon (Women)', 8900.0, '8 900 руб.', 'Классические низкие кеды в футбольном стиле T-toe. Легкие, аккуратно смотрятся на женской ножке.', 'кеды', 'Puma', 'https://www.puma.com', 'женский'),
-    ('Reebok Club C 85 (Women)', 9990.0, '9 990 руб.', 'Минималистичные женские теннисные кеды родом из 1985 года. Мягкая винтажная кожа.', 'кеды', 'Reebok', 'https://www.reebok.com', 'женский'),
-    ('Adidas Court Rally Slip', 6990.0, '6 990 руб.', 'Минималистичные хлопковые слипоны на гибкой вулканизированной подошве. Идеально для жаркого лета.', 'слипоны', 'Adidas', 'https://www.adidas.com', 'женский'),
-
-    # Туфли и балетки (Женские)
-    ('Adidas Jabbar Dress Low', 22000.0, '22 000 руб.', 'Эксклюзивная коллекция. Премиальные строгие кожаные туфли для утонченного образа.', 'туфли', 'Adidas', 'https://www.adidas.com', 'женский'),
-    ('Puma Speedcat Mary Jane', 13500.0, '13 500 руб.', 'Трендовые туфли-балетки на основе гоночных Speedcat. Элегантный ремешок и мягкая натуральная замша.', 'балетки', 'Puma', 'https://www.puma.com', 'женский'),
-    
-    # Сапоги и ботинки (Женские)
-    ('Adidas Terrex Winter Boot', 21990.0, '21 990 руб.', 'Высокие зимние сапоги-дутики с мембраной GORE-TEX и глубоким технологичным протектором Continental.', 'сапоги', 'Adidas', 'https://www.adidas.com', 'женский'),
-    ('Nike ACG Gaiadome GORE-TEX', 26500.0, '26 500 руб.', 'Профессиональные высокие сапоги-треккеры для суровых зим. Полная защита от промокания.', 'сапоги', 'Nike', 'https://www.nike.com', 'женский'),
-    ('Nike ACG Woodside Chukka', 13200.0, '13 200 руб.', 'Элегантные укороченные женские ботильоны с резиновой калошей для защиты от слякоти и влажной осени.', 'ботильоны', 'Nike', 'https://www.nike.com', 'женский'),
-    ('Reebok Work N Cushion Boot', 11990.0, '11 990 руб.', 'Прочные осенние кожаные ботинки с поддержкой голеностопа и мягкой межподошвой.', 'ботинки', 'Reebok', 'https://www.reebok.com', 'женский'),
-
-    # Босоножки и сандалии (Женские)
-    ('Nike Air Max Sol Sandal', 8990.0, '8 990 руб.', 'Спортивные летние сандалии на регулируемых липучках. Мягкая подошва с воздушной подушкой Air Max.', 'сандалии', 'Nike', 'https://www.nike.com', 'женский'),
-    ('Puma Platform Sandal Pop', 6490.0, '6 490 руб.', 'Открытые летние босоножки на высокой легкой платформе. Яркий дизайн и надежная фиксация стопы.', 'босоножки', 'Puma', 'https://www.puma.com', 'женский'),
-    ('Adidas Adilette Clog', 4990.0, '4 990 руб.', 'Удобные закрытые сабо-клоги на основе культовых шлепанцев Adilette. Легкий полимерный материал EVA.', 'сабо', 'Adidas', 'https://www.adidas.com', 'женский'),
-    ('Nike Calm Mule', 7990.0, '7 990 руб.', 'Минималистичные мюли со съемным задним ремешком. Водонепронимаемая пена, которая легко моется.', 'мюли', 'Nike', 'https://www.nike.com', 'женский')
-]
-
-# Обновленный запрос (включает 8 параметров вместо 7)
-cursor.executemany('''INSERT INTO shoes 
-                      (name, price, price_text, description, shoes_type, brand, url, gender) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', shoes_data)
+# 4. Наличие (Связь варианта с размером и количеством)
+cursor.execute('''CREATE TABLE stock (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    variant_id INTEGER,
+    size INTEGER,
+    quantity INTEGER,
+    FOREIGN KEY(variant_id) REFERENCES shoe_variants(id)
+)''')
 
 conn.commit()
 conn.close()
-
-print("""
-🗄 База данных shoe_shop.db успешно настроена под трёхструктурный каталог!
-• Добавлена колонка 'gender'.
-• Все товары четко разделены на мужские и женские.
-• Бот сможет делать корректные SQL-выборки без ошибок!
-""")
+print("База данных успешно пересоздана для новой структуры!")
