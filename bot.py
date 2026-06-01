@@ -217,7 +217,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['msg_count'] = -5 
         should_show_ad = False
     else:
-        if (msg_count >= 4 and current_topic == 'sports') or (msg_count >= 10):
+        if (msg_count >= 4 and current_topic == 'sports') or (msg_count >= 6):
             should_show_ad = True
             context.user_data['msg_count'] = 0  
         else:
@@ -280,7 +280,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 7. БЛОК 5: Заглушка
     await update.message.reply_text("Интересно, расскажи подробнее!", reply_markup=get_main_keyboard())
     save_dialog(user_id, user_text, "Не понял")
-        
+
 async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
