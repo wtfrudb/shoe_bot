@@ -26,13 +26,13 @@ CATALOG = {
     "Мужская обувь": {
         "Кроссовки и кеды": ["Кроссовки", "Кеды", "Слипоны"],
         "Туфли": ["Туфли", "Мокасины"],
-        "Сапоги и ботинки": ["Сапоги", "Ботинки"], # Казаки убраны
+        "Сапоги и ботинки": ["Сапоги", "Ботинки"], 
         "Сандалии и открытая": ["Сандалии"]
     },
     "Женская обувь": {
         "Кроссовки и кеды": ["Кроссовки", "Кеды", "Слипоны"],
         "Туфли и балетки": ["Туфли", "Балетки", "Мокасины", "Лоферы", "Таби"],
-        "Сапоги и ботинки": ["Сапоги", "Ботинки", "Ботильоны"], # Казаки убраны
+        "Сапоги и ботинки": ["Сапоги", "Ботинки", "Ботильоны"], 
         "Босоножки и сандалии": ["Босоножки", "Сабо", "Мюли", "Сандалии"]
     }
 }
@@ -57,14 +57,11 @@ def get_main_keyboard():
 def get_start_inline():
     keyboard = [
         [
-            # ИСПРАВЛЕНО: callback_data теперь совпадает с тем, что ждет обработчик
             InlineKeyboardButton("👟 Подобрать обувь", callback_data="start_selection"),
             InlineKeyboardButton("💬 Просто поболтать", callback_data="start_chat")
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
-
-# --- ГЕНЕРАЦИЯ ИНЛАЙН-КНОПОК (ПОД СООБЩЕНИЯМИ) ---
 
 def get_gender_inline():
     keyboard = [
@@ -76,7 +73,7 @@ def get_gender_inline():
 
 def get_categories_inline(gender):
     categories = list(CATALOG.get(gender, {}).keys())
-    keyboard = []
+    keyboard = [[InlineKeyboardButton("🛍 Показать весь ассортимент", callback_data="all_gender")]]
     row = []
     for cat in categories:
         row.append(InlineKeyboardButton(cat, callback_data=f"cat_{cat}"))
@@ -91,7 +88,7 @@ def get_categories_inline(gender):
 
 def get_subcategories_inline(gender, category):
     subcategories = CATALOG.get(gender, {}).get(category, [])
-    keyboard = []
+    keyboard = [[InlineKeyboardButton("✨ Показать все типы", callback_data="all_subcategories")]]
     row = []
     for sub in subcategories:
         row.append(InlineKeyboardButton(sub, callback_data=f"sub_{sub}"))
@@ -155,15 +152,26 @@ def save_dialog(user_id, user_msg, bot_msg):
     conn.commit()
     conn.close()
 
+# ИСПРАВЛЕНО: добавлена row_factory и поддержка выборки "all_in_" категорий прямо из БД
 def search_shoes(shoes_type=None, brand=None, max_price=None, gender=None):
     conn = sqlite3.connect('shoe_shop.db')
+    conn.row_factory = sqlite3.Row  # Важно для корректной работы shoe['id']
     cur = conn.cursor()
-    query = "SELECT name, price, price_text, description, shoes_type, brand, url FROM shoes WHERE 1=1"
+    query = "SELECT id, name, price, price_text, description, shoes_type, brand, url, image_url FROM shoes WHERE 1=1"
     params = []
     
     if shoes_type:
-        query += " AND LOWER(shoes_type) = ?"
-        params.append(shoes_type.lower())
+        if shoes_type.startswith("all_in_"):
+            cat_name = shoes_type.replace("all_in_", "")
+            subcategories = CATALOG.get(gender, {}).get(cat_name, [])
+            placeholders = ", ".join(["?"] * len(subcategories))
+            query += f" AND LOWER(shoes_type) IN ({placeholders})"
+            for sub in subcategories:
+                params.append(sub.lower())
+        else:
+            query += " AND LOWER(shoes_type) = ?"
+            params.append(shoes_type.lower())
+
     if brand and brand != "Any" and brand != "Любой":
         query += " AND LOWER(brand) = ?"
         params.append(brand.lower())
@@ -199,7 +207,6 @@ def get_available_brands_for_type(shoes_type, gender=None):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    # ИСПРАВЛЕНО: удаляем старую клавиатуру при старте
     await update.message.reply_text("Запускаю меню...", reply_markup=ReplyKeyboardRemove())
     response = "Привет! Я бот-помощник магазина обуви. 👟\n\nЧем вы хотите заняться? Выберите действие ниже:"
     await update.message.reply_text(response, reply_markup=get_start_inline())
@@ -209,17 +216,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_text_lower = user_text.lower().strip()
 
-    from telegram import ReplyKeyboardRemove
-
-    # 1. Умный счетчик сообщений и определение темы
     context.user_data['msg_count'] = context.user_data.get('msg_count', 0) + 1
     msg_count = context.user_data['msg_count']
     current_topic = context.user_data.get('last_topic', 'general')
-    
-    # Извлекаем последнее сообщение бота для памяти
     last_bot_msg = context.user_data.get('last_bot_message', '')
 
-    # Определение флага показа рекламы
     if any(word in user_text_lower for word in ["нет", "не хочу", "не надо", "хватит"]):
         context.user_data['msg_count'] = -5 
         should_show_ad = False
@@ -230,16 +231,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             should_show_ad = False
 
-    # 2. БЛОК 0: Системные команды
     if "в главное меню" in user_text_lower or user_text_lower == "/start":
         context.user_data.clear()
         response = "Вы вернулись в главное меню. Чем займемся?"
         await update.message.reply_text("Очищаю меню...", reply_markup=ReplyKeyboardRemove())
         await update.message.reply_text(response, reply_markup=get_start_inline())
-        database.save_dialog(user_id, user_text, response)  # ИСПРАВЛЕНО: добавлен database.
+        save_dialog(user_id, user_text, response)
         return
 
-    # 3. БЛОК 1: Техническое состояние (ожидание цены)
     if context.user_data.get('awaiting_price_text'):
         max_price = parse_price(user_text)
         if max_price is None:
@@ -250,43 +249,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_final_search(update.message, context)
         return
 
-    # 4. БЛОК 2: Интеллектуальный анализ с ПЕРЕДАЧЕЙ ИСТОРИИ (last_bot_msg)
-    intent, response = process_message(
-        user_text, 
-        allow_ad=should_show_ad, 
-        topic=current_topic, 
-        last_bot_msg=last_bot_msg
-    )
+    intent, response = process_message(user_text, allow_ad=should_show_ad, topic=current_topic, last_bot_msg=last_bot_msg)
 
-    # Логика перехода к покупке
     buying_phrases = ["хочу купить", "купить обувь", "купить кроссовки", "подбор обуви", "выбрать обувь"]
     if intent == "buy_shoes" or any(phrase in user_text_lower for phrase in buying_phrases):
         context.user_data.clear()
         await update.message.reply_text("Перехожу к подбору...", reply_markup=ReplyKeyboardRemove())
         await update.message.reply_text("О, подбор обуви — это по моей части! 👟 Какой ассортимент Вас интересует?", reply_markup=get_gender_inline())
-        database.save_dialog(user_id, user_text, "Начал подбор обуви")  # ИСПРАВЛЕНО: добавлен database.
+        save_dialog(user_id, user_text, "Начал подбор обуви")
         return
 
-    # 5. Обновление контекста темы и ЗАПОМИНАНИЕ ОТВЕТА
     if response:
         r = response.lower()
         if any(w in r for w in ["спорт", "волейбол", "футбол", "бег", "тренировка"]):
             context.user_data['last_topic'] = 'sports'
         elif any(w in r for w in ["кино", "фильм", "сериал", "книга", "аниме"]):
             context.user_data['last_topic'] = 'movies'
-        
-        # Сохраняем ответ, чтобы в следующий раз бот знал, что он уже сказал
         context.user_data['last_bot_message'] = response
 
-    # 6. БЛОК 4: Ответ пользователю
     if response:
         await update.message.reply_text(response, reply_markup=get_main_keyboard())
-        database.save_dialog(user_id, user_text, response)  # ИСПРАВЛЕНО: добавлен database.
+        save_dialog(user_id, user_text, response)
         return
 
-    # 7. БЛОК 5: Заглушка
     await update.message.reply_text("Интересно, расскажи подробнее!", reply_markup=get_main_keyboard())
-    database.save_dialog(user_id, user_text, "Не понял")  # ИСПРАВЛЕНО: добавлен database.
+    save_dialog(user_id, user_text, "Не понял")
 
 
 async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -298,19 +285,16 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "menu_main":
         context.user_data.clear()
         response = "Вы вернулись в главное меню. Чем займемся?"
-        # Убираем старую клавиатуру и не ставим новую (ReplyKeyboardRemove)
         await query.message.reply_text(response, reply_markup=ReplyKeyboardRemove())
         await query.message.reply_text("Выберите действие:", reply_markup=get_start_inline())
         return
 
     if data == "start_selection":
-        # Активируем кнопку внизу только здесь
         await query.message.reply_text("Переходим к подбору:", reply_markup=get_main_keyboard())
-        # И сразу вызываем первый шаг
         await query.message.reply_text("Какой ассортимент Вас интересует?", reply_markup=get_gender_inline())
         return
     
-    # Шаг 1: Выбор Пола
+    # ИСПРАВЛЕНО: возвращен и восстановлен пропущенный шаг выбора пола (gender_ male / female)
     if data.startswith("gender_"):
         gender_map = {"gender_male": "Мужская обувь", "gender_female": "Женская обувь"}
         context.user_data['current_gender'] = gender_map[data]
@@ -318,7 +302,26 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(response, reply_markup=get_categories_inline(gender_map[data]))
         return
 
-    # Возврат к выбору пола
+    # Клик по кнопке "Показать весь ассортимент" (для конкретного пола)
+    if data == "all_gender":
+        gender = context.user_data.get('current_gender')
+        context.user_data['current_category'] = None
+        context.user_data['shoes_type'] = None
+        
+        all_brands = set()
+        for cat_data in CATALOG.get(gender, {}).values():
+            for sub in cat_data:
+                brands = database.get_available_brands_for_type(sub, gender)
+                all_brands.update(brands)
+                
+        if not all_brands:
+            await query.message.reply_text("К сожалению, в данном разделе сейчас нет обуви.", reply_markup=get_gender_inline())
+            return
+            
+        response = f"Вы выбрали весь ассортимент ({gender}). Какой бренд предпочитаете?"
+        await query.edit_message_text(response, reply_markup=get_brands_inline(list(all_brands)))
+        return
+
     if data == "back_to_gender":
         response = "Какой ассортимент Вас интересует?"
         await query.edit_message_text(response, reply_markup=get_gender_inline())
@@ -333,7 +336,6 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(response, reply_markup=get_subcategories_inline(gender, category))
         return
 
-    # Возврат к категориям
     if data == "back_to_cat":
         gender = context.user_data.get('current_gender')
         response = f"Раздел: '{gender}'. Выберите общую категорию обуви:"
@@ -341,15 +343,34 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # Шаг 3: Выбор Подкатегории (Типа обуви)
+    if data == "all_subcategories":
+        gender = context.user_data.get('current_gender')
+        category = context.user_data.get('current_category')
+        
+        subcategories = CATALOG.get(gender, {}).get(category, [])
+        context.user_data['shoes_type'] = f"all_in_{category}"
+        
+        all_brands = set()
+        for sub in subcategories:
+            brands = database.get_available_brands_for_type(sub, gender)
+            all_brands.update(brands)
+            
+        if not all_brands:
+            response = f"К сожалению, в категории '{category}' сейчас ничего нет. Выберите другую:"
+            await query.edit_message_text(response, reply_markup=get_categories_inline(gender))
+            return
+            
+        response = f"Ищем все модели из категории '{category}'. Какой бренд предпочитаете?"
+        await query.edit_message_text(response, reply_markup=get_brands_inline(list(all_brands)))
+        return
+
     if data.startswith("sub_"):
-        # ИСПРАВЛЕНО: добавляем .lower().strip(), чтобы строка стала 'балетки' и точно совпала с базой данных
         sub = data.replace("sub_", "").lower().strip()
         context.user_data['shoes_type'] = sub
         gender = context.user_data.get('current_gender')
         
         available_brands = database.get_available_brands_for_type(sub, gender)
         if not available_brands:
-            # ИСПРАВЛЕНО: используем .capitalize(), чтобы в тексте ошибки слово писалось красиво: 'Балетки'
             response = f"К сожалению, моделей '{sub.capitalize()}' сейчас нет в базе. Выберите другой тип:"
             category = context.user_data.get('current_category')
             await query.edit_message_text(response, reply_markup=get_subcategories_inline(gender, category))
@@ -359,7 +380,6 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(response, reply_markup=get_brands_inline(available_brands))
         return
 
-    # Возврат к подкатегориям
     if data == "back_to_sub":
         gender = context.user_data.get('current_gender')
         category = context.user_data.get('current_category')
@@ -377,12 +397,29 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(response, reply_markup=get_price_inline())
         return
 
-    # Возврат к брендам
     if data == "back_to_brand":
         shoes_type = context.user_data.get('shoes_type')
         gender = context.user_data.get('current_gender')
-        available_brands = database.get_available_brands_for_type(shoes_type, gender)
-        response = f"Ищем {shoes_type.lower()}. Какой бренд предпочитаете?"
+        
+        if shoes_type and shoes_type.startswith("all_in_"):
+            cat_name = shoes_type.replace("all_in_", "")
+            subcategories = CATALOG.get(gender, {}).get(cat_name, [])
+            available_brands = set()
+            for sub in subcategories:
+                available_brands.update(database.get_available_brands_for_type(sub, gender))
+            available_brands = list(available_brands)
+            response = f"Ищем все модели из категории '{cat_name}'. Какой бренд предпочитаете?"
+        elif not shoes_type:
+            all_brands = set()
+            for cat_data in CATALOG.get(gender, {}).values():
+                for sub in cat_data:
+                    all_brands.update(database.get_available_brands_for_type(sub, gender))
+            available_brands = list(all_brands)
+            response = f"Вы выбрали весь ассортимент ({gender}). Какой бренд предпочитаете?"
+        else:
+            available_brands = database.get_available_brands_for_type(shoes_type, gender)
+            response = f"Ищем {shoes_type.lower()}. Какой бренд предпочитаете?"
+            
         await query.edit_message_text(response, reply_markup=get_brands_inline(available_brands))
         return
 
@@ -393,14 +430,12 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await process_final_search(query.message, context, edit_mode=True)
         return
     
-    # Обработка уточнения цены после отказа
     if data == "reject_price":
         context.user_data['awaiting_price_text'] = True
         response = "Хорошо, давайте изменим бюджет. На какую максимальную сумму рассчитываете? (Введите числом или выберите кнопку)"
         await query.message.reply_text(response, reply_markup=get_price_inline())
         return
 
-    # Шаги Финала: Одобрение или отказ
     if data == "shoes_yes":
         response = "Замечательно! 🎉 Вы сделали отличный выбор. Для оформления заказа перейдите по ссылкам у товаров.\n\nЧем ещё я могу Вам помочь?"
         context.user_data.clear()
@@ -409,24 +444,40 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data == "shoes_no":
         shoes_type = context.user_data.get('shoes_type', 'обувь')
-        # ИСПРАВЛЕНО: выводим тип с большой буквы для красоты
-        response = f"Принял! Модели '{shoes_type.capitalize()}' не подошли. Что мы изменим, чтобы найти идеальную пару?"
+        if shoes_type and shoes_type.startswith("all_in_"):
+            shoes_type = shoes_type.replace("all_in_", "")
+        response = f"Принял! Модели '{shoes_type.capitalize() if shoes_type else 'обуви'}' не подошли. Что мы изменим, чтобы найти идеальную пару?"
         await query.message.reply_text(response, reply_markup=get_rejection_inline())
         return
 
-    # Обработка уточнений после отказа
     if data == "reject_brand":
         shoes_type = context.user_data.get('shoes_type')
         gender = context.user_data.get('current_gender')
-        available_brands = database.get_available_brands_for_type(shoes_type, gender)
-        # ИСПРАВЛЕНО: выводим тип с большой буквы для красоты
-        response = f"Давайте выберем другой бренд для подкатегории '{shoes_type.capitalize()}':"
+        if shoes_type and shoes_type.startswith("all_in_"):
+            cat_name = shoes_type.replace("all_in_", "")
+            subcategories = CATALOG.get(gender, {}).get(cat_name, [])
+            available_brands = set()
+            for sub in subcategories:
+                available_brands.update(database.get_available_brands_for_type(sub, gender))
+            available_brands = list(available_brands)
+            response = f"Давайте выберем другой бренд для категории '{cat_name.capitalize()}':"
+        elif not shoes_type:
+            all_brands = set()
+            for cat_data in CATALOG.get(gender, {}).values():
+                for sub in cat_data:
+                    all_brands.update(database.get_available_brands_for_type(sub, gender))
+            available_brands = list(all_brands)
+            response = f"Давайте выберем другой бренд для всего ассортимента ({gender}):"
+        else:
+            available_brands = database.get_available_brands_for_type(shoes_type, gender)
+            response = f"Давайте выберем другой бренд для подкатегории '{shoes_type.capitalize()}':"
+            
         await query.message.reply_text(response, reply_markup=get_brands_inline(available_brands))
         return
 
     if data == "reject_cat":
         response = "Давайте начнем сначала. Какой ассортимент Вас интересует?"
-        await update.message.reply_text(response, reply_markup=get_gender_inline())
+        await query.message.reply_text(response, reply_markup=get_gender_inline())
         return
     
     if data == "start_chat":
@@ -437,9 +488,6 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
-    # === ДОБАВЛЕНО: НОВАЯ ЛОГИКА БРОНИРОВАНИЯ И РАЗМЕРОВ (Пункты 5 и 6 вашего плана) ===
-    
-    # Клик по кнопке выбора конкретной модели (номер карточки)
     if data.startswith("select_shoe_"):
         shoe_id = int(data.split("_")[2])
         sizes = database.get_sizes_for_shoe(shoe_id)
@@ -448,10 +496,8 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.message.reply_text("К сожалению, этого товара временно нет в наличии.", reply_markup=get_rejection_inline())
             return
             
-        # Генерируем инлайн-кнопки под каждый доступный размер динамически
         keyboard = []
         for size in sizes:
-            # ИСПРАВЛЕНО: Применяем format_size(size) для отображения на инлайн кнопках
             fmt_size = format_size(size)
             keyboard.append([InlineKeyboardButton(f"Размер {fmt_size}", callback_data=f"select_size_{shoe_id}_{fmt_size}")])
         keyboard.append([InlineKeyboardButton("⬅️ Назад к моделям", callback_data="shoes_no")])
@@ -460,35 +506,28 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.reply_text("Выберите доступный размер этой модели:", reply_markup=markup)
         return
 
-    # Клик по кнопке конкретного размера -> Выдаем заветную ссылку из БД
     if data.startswith("select_size_"):
         parts = data.split("_")
         shoe_id = int(parts[2])
         chosen_size = parts[3]
         
-        # Получаем прямую оригинальную ссылку на обувь из БД
         product_url = database.get_shoe_url(shoe_id)
-        
-        # Очищаем ссылку от параметров (если они есть) для красивого вида
         clean_url = product_url.split('?')[0] if product_url else ""
         
-        # Собираем сообщение с использованием Markdown-разметки
         response = (
             f"Отличный выбор! Размер {chosen_size} успешно забронирован за Вами. 🎉\n\n"
             f"Чтобы завершить оформление и оплатить товар, "
             f"[нажмите здесь]({clean_url})"
         )
         
-        # Очищаем сессию поиска
         context.user_data.clear()
-        
-        # Отправляем сообщение обязательно с parse_mode="Markdown"
         await query.message.reply_text(
             response, 
             reply_markup=get_start_inline(),
             parse_mode="Markdown"
         )
         return
+
 
 # --- ФУНКЦИЯ ФИНАЛЬНОГО ПОИСКА И ВЫДАЧИ РЕЗУЛЬТАТОВ ---
 
@@ -498,11 +537,9 @@ async def process_final_search(message_obj, context, edit_mode=False):
     max_price = context.user_data.get('max_price')
     gender_filter = context.user_data.get('current_gender')
     
-    # Ищем модели в БД через созданный файл database.py
-    # (добавили приставку database. к функции поиска)
-    shoes_list = database.search_shoes(shoes_type, brand_filter, max_price, gender_filter)
+    # ИСПОЛЬЗУЕМ ЛОКАЛЬНУЮ ИСПРАВЛЕННУЮ ФУНКЦИЮ С СУППОРТОМ 'all_in_' и row_factory
+    shoes_list = search_shoes(shoes_type, brand_filter, max_price, gender_filter)
     
-    # Если обувь не найдена — оставляем вашу старую логику с выводом ошибки
     if not shoes_list:
         response = "К сожалению, не нашёл обуви по Вашим критериям. 😔\nВы можете вернуться назад и изменить параметры!"
         if edit_mode:
@@ -511,8 +548,6 @@ async def process_final_search(message_obj, context, edit_mode=False):
             await message_obj.reply_text(response, reply_markup=get_failure_inline())
         return
 
-    # ВАЖНО: Если мы зашли в edit_mode (например, нажали кнопку инлайн-меню "Любой бюджет"),
-    # старое текстовое сообщение бота нужно удалить, так как ниже мы пришлем новые карточки с ФОТО
     if edit_mode:
         try:
             await message_obj.delete()
@@ -521,12 +556,8 @@ async def process_final_search(message_obj, context, edit_mode=False):
 
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
-    # Циклом отправляем КАЖДУЮ найденную модель отдельным сообщением с картинкой
     for index, shoe in enumerate(shoes_list):
-        # Достаем доступные размеры для этой пары из таблицы stock
         sizes = database.get_sizes_for_shoe(shoe['id'])
-        
-        # ИСПРАВЛЕНО: Форматируем каждый размер через format_size для красивого вывода в описании
         sizes_text = ", ".join([format_size(s) for s in sizes]) if sizes else "Нет в наличии"
         
         caption = (
@@ -538,16 +569,13 @@ async def process_final_search(message_obj, context, edit_mode=False):
             f"📏 Доступные размеры: {sizes_text}"
         )
         
-        # Отправляем фото-карточку (ссылка на фото image_url берется прямо из БД)
         await context.bot.send_photo(
             chat_id=message_obj.chat_id,
             photo=shoe['image_url'],
             caption=caption
         )
 
-    # После того как все карточки отправились, выводим кнопки управления под ними
     if len(shoes_list) == 1:
-        # Если нашлась всего одна модель:
         shoe_id = shoes_list[0]['id']
         inline_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("Да, нравится! 🔥", callback_data=f"select_shoe_{shoe_id}")],
@@ -559,21 +587,20 @@ async def process_final_search(message_obj, context, edit_mode=False):
             reply_markup=inline_keyboard
         )
     else:
-        # Если моделей несколько — создаем динамические кнопки с номерами моделей в один ряд
         buttons = []
         for index, shoe in enumerate(shoes_list):
-            # В callback_data зашиваем ID обуви из базы данных, чтобы бот знал, по какому номеру кликнули
             buttons.append(InlineKeyboardButton(f"№ {index + 1}", callback_data=f"select_shoe_{shoe['id']}"))
         
         inline_keyboard = InlineKeyboardMarkup([
-            buttons,  # Кнопки с цифрами встанут горизонтально в ряд (напр. [№ 1] [№ 2] [№ 3])
-            [InlineKeyboardButton("Нет, не нравится ⬅️", callback_data="shoes_no")] # Кнопка отмены на новой строке
+            buttons,  
+            [InlineKeyboardButton("Нет, не нравится ⬅️", callback_data="shoes_no")] 
         ])
         await context.bot.send_message(
             chat_id=message_obj.chat_id,
             text="Какая модель вам нравится?",
             reply_markup=inline_keyboard
         )
+
 
 # --- ОБРАБОТКА ГОЛОСА ---
 
