@@ -12,27 +12,41 @@ TOKEN = "8321615785:AAGZNYwUQyeyWiPeslWq50EDcvvH9n0G4-Y"
 
 # Глобальные константы для брендов
 BRANDS = {
-    'nike': 'Nike', 'adidas': 'Adidas', 'puma': 'Puma', 'reebok': 'Reebok'
+    'nike': 'Nike', 'adidas': 'Adidas', 'puma': 'Puma', 'reebok': 'Reebok',
+    'new balance': 'New Balance', 'asics': 'Asics', 'demix': 'Demix',
+    'converse': 'Converse', 'vans': 'Vans', 'tofa': 'Tofa',
+    'dr. martens': 'Dr. Martens', 'salomon': 'Salomon', 'salamander':'Salamander',
+    'gucci': 'Gucci', 'chanel': 'Chanel', 'prada': 'Prada', 'hermes': 'Hermes',
+    'maison margiela': 'Maison Margiela', 'bottega veneta': 'Bottega Veneta',
+    'valentino': 'Valentino', 'jimmy choo':'Jimmy Choo', 'diesel':'Diesel'
 }
 
-# ТРЁХУРОВНЕВЫЙ КАТАЛОГ
+# ОБНОВЛЕННЫЙ КАТАЛОГ
 CATALOG = {
     "Мужская обувь": {
         "Кроссовки и кеды": ["Кроссовки", "Кеды", "Слипоны"],
-        "Туфли и лоферы": ["Туфли", "Лоферы", "Мокасины"],
-        "Сапоги и ботинки": ["Ботинки", "Казаки"],
+        "Туфли": ["Туфли", "Мокасины"],
+        "Сапоги и ботинки": ["Сапоги", "Ботинки"], # Казаки убраны
         "Сандалии и открытая": ["Сандалии"]
     },
     "Женская обувь": {
         "Кроссовки и кеды": ["Кроссовки", "Кеды", "Слипоны"],
-        "Туфли и балетки": ["Туфли", "Лоферы", "Мокасины", "Балетки", "Таби"],
-        "Сапоги и ботинки": ["Сапоги", "Ботильоны", "Ботинки", "Казаки"],
-        "Босоножки и сандалии": ["Босоножки", "Сандалии", "Сабо", "Мюли"]
+        "Туфли и балетки": ["Туфли", "Балетки", "Мокасины", "Лоферы", "Таби"],
+        "Сапоги и ботинки": ["Сапоги", "Ботинки", "Ботильоны"], # Казаки убраны
+        "Босоножки и сандалии": ["Босоножки", "Сабо", "Мюли", "Сандалии"]
     }
 }
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- ВСТАВЛЕНО: ФУНКЦИЯ КРАСИВОГО ФОРМАТИРОВАНИЯ РАЗМЕРОВ БЕЗ .0 ---
+def format_size(size):
+    try:
+        size_float = float(size)
+        return str(int(size_float)) if size_float == int(size_float) else str(size_float)
+    except (ValueError, TypeError):
+        return str(size)
 
 # --- ПОСТОЯННАЯ КЛАВИАТУРА ВНИЗУ ---
 def get_main_keyboard():
@@ -100,7 +114,7 @@ def get_brands_inline(available_brands):
             row = []
     if row:
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("✨ Любой бренд", callback_data="brand_Any")])
+    keyboard.append([InlineKeyboardButton("✨ Показать все бренды", callback_data="brand_Any")])
     keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="back_to_sub"),
                      InlineKeyboardButton("🏠 В главное меню", callback_data="menu_main")])
     return InlineKeyboardMarkup(keyboard)
@@ -279,7 +293,6 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     
-    user_id = update.effective_user.id
     data = query.data
 
     if data == "menu_main":
@@ -413,7 +426,7 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data == "reject_cat":
         response = "Давайте начнем сначала. Какой ассортимент Вас интересует?"
-        await query.message.reply_text(response, reply_markup=get_gender_inline())
+        await update.message.reply_text(response, reply_markup=get_gender_inline())
         return
     
     if data == "start_chat":
@@ -422,38 +435,6 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             "С удовольствием поболтаю! Расскажи, как твои дела?", 
             reply_markup=get_main_keyboard()
         )
-        return
-
-    # === ЛОГИКА БРОНИРОВАНИЯ И РАЗМЕРОВ ===
-    if data.startswith("select_shoe_"):
-        shoe_id = int(data.split("_")[2])
-        sizes = database.get_sizes_for_shoe(shoe_id)
-        
-        if not sizes:
-            await query.message.reply_text("К сожалению, этого товара временно нет в наличии.", reply_markup=get_rejection_inline())
-            return
-            
-        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-        keyboard = []
-        for size in sizes:
-            keyboard.append([InlineKeyboardButton(f"Размер {size}", callback_data=f"select_size_{shoe_id}_{size}")])
-        keyboard.append([InlineKeyboardButton("⬅️ Назад к моделям", callback_data="shoes_no")])
-        
-        markup = InlineKeyboardMarkup(keyboard)
-        await query.message.reply_text("Выберите доступный размер этой модели:", reply_markup=markup)
-        return
-
-    if data.startswith("select_size_"):
-        parts = data.split("_")
-        shoe_id = int(parts[2])
-        chosen_size = parts[3]
-        
-        product_url = database.get_shoe_url(shoe_id)
-        
-        response = f"Отличный выбор! Размер {chosen_size} успешно забронирован за Вами. 🎉\n\nЧтобы завершить оформление и оплатить товар, перейдите по ссылке:\n{product_url}"
-        
-        context.user_data.clear()
-        await query.message.reply_text(response, reply_markup=get_start_inline())
         return
 
     # === ДОБАВЛЕНО: НОВАЯ ЛОГИКА БРОНИРОВАНИЯ И РАЗМЕРОВ (Пункты 5 и 6 вашего плана) ===
@@ -470,7 +451,9 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Генерируем инлайн-кнопки под каждый доступный размер динамически
         keyboard = []
         for size in sizes:
-            keyboard.append([InlineKeyboardButton(f"Размер {size}", callback_data=f"select_size_{shoe_id}_{size}")])
+            # ИСПРАВЛЕНО: Применяем format_size(size) для отображения на инлайн кнопках
+            fmt_size = format_size(size)
+            keyboard.append([InlineKeyboardButton(f"Размер {fmt_size}", callback_data=f"select_size_{shoe_id}_{fmt_size}")])
         keyboard.append([InlineKeyboardButton("⬅️ Назад к моделям", callback_data="shoes_no")])
         
         markup = InlineKeyboardMarkup(keyboard)
@@ -486,11 +469,25 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Получаем прямую оригинальную ссылку на обувь из БД
         product_url = database.get_shoe_url(shoe_id)
         
-        response = f"Отличный выбор! Размер {chosen_size} успешно забронирован за Вами. 🎉\n\nЧтобы завершить оформление и оплатить товар, перейдите по ссылке:\n{product_url}"
+        # Очищаем ссылку от параметров (если они есть) для красивого вида
+        clean_url = product_url.split('?')[0] if product_url else ""
         
-        # Очищаем сессию поиска и возвращаем в главное меню
+        # Собираем сообщение с использованием Markdown-разметки
+        response = (
+            f"Отличный выбор! Размер {chosen_size} успешно забронирован за Вами. 🎉\n\n"
+            f"Чтобы завершить оформление и оплатить товар, "
+            f"[нажмите здесь]({clean_url})"
+        )
+        
+        # Очищаем сессию поиска
         context.user_data.clear()
-        await query.message.reply_text(response, reply_markup=get_start_inline())
+        
+        # Отправляем сообщение обязательно с parse_mode="Markdown"
+        await query.message.reply_text(
+            response, 
+            reply_markup=get_start_inline(),
+            parse_mode="Markdown"
+        )
         return
 
 # --- ФУНКЦИЯ ФИНАЛЬНОГО ПОИСКА И ВЫДАЧИ РЕЗУЛЬТАТОВ ---
@@ -528,7 +525,9 @@ async def process_final_search(message_obj, context, edit_mode=False):
     for index, shoe in enumerate(shoes_list):
         # Достаем доступные размеры для этой пары из таблицы stock
         sizes = database.get_sizes_for_shoe(shoe['id'])
-        sizes_text = ", ".join(map(str, sizes)) if sizes else "Нет в наличии"
+        
+        # ИСПРАВЛЕНО: Форматируем каждый размер через format_size для красивого вывода в описании
+        sizes_text = ", ".join([format_size(s) for s in sizes]) if sizes else "Нет в наличии"
         
         caption = (
             f"Модель №{index + 1}\n\n"

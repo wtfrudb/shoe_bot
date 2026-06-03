@@ -8,97 +8,141 @@ if os.path.exists('shoe_shop.db'):
 conn = sqlite3.connect('shoe_shop.db')
 cursor = conn.cursor()
 
-# 1. Создаем таблицу истории диалогов
+# Создание таблиц
 cursor.execute('''
     CREATE TABLE conversations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
-        user_message TEXT,
-        bot_answer TEXT,
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        user_id TEXT, 
+        user_message TEXT, 
+        bot_answer TEXT, 
         date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
 ''')
 
-# 2. Создаем таблицу для ОБУВИ
 cursor.execute('''
     CREATE TABLE shoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        price REAL,
-        price_text TEXT,
-        description TEXT,
-        shoes_type TEXT,
-        brand TEXT,
-        url TEXT,
+        name TEXT, price REAL, 
+        price_text TEXT, 
+        description TEXT, 
+        shoes_type TEXT, 
+        brand TEXT, 
+        url TEXT, 
         image_url TEXT,
         gender TEXT
     )
 ''')
 
-# 3. Создаем таблицу для РАЗМЕРОВ
+cursor.execute('CREATE INDEX idx_shoes_type_gender ON shoes(shoes_type, gender)')
+
 cursor.execute('''
     CREATE TABLE stock (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        shoe_id INTEGER,
-        size INTEGER,
-        quantity INTEGER,
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        shoe_id INTEGER, 
+        size REAL, 
+        quantity INTEGER, 
         FOREIGN KEY(shoe_id) REFERENCES shoes(id)
     )
 ''')
 
 shoes_data = [
-    # МУЖСКАЯ ОБУВЬ
-    ('Nike Air Force 1 07 (Men)', 13990.0, '13 990 руб.', 
-     'Легендарные баскетбольные кроссовки. Белая классика на все времена с технологией амортизации Air.', 'кроссовки',
-     'Nike', 'https://www.nike.com', 'https://images.unsplash.com/photo-1597350584914-55bb62285896?w=500', 'мужской'),
-    ('Adidas Ultraboost 1.0 (Men)', 18900.0, '18 900 руб.', 
-     'Премиальные кроссовки для бега и ходьбы. Мягкий вязаный верх Primeknit и легендарная подошва Boost.', 'кроссовки', 
-     'Adidas', 'https://www.adidas.com', 'https://images.unsplash.com/photo-1691067951700-138ca8f4841f?w=800', 'мужской'),
-    ('Puma RS-X Efekt (Men)', 11800.0, '11 800 руб.', 
-     'Массивные футуристичные кроссовки из комбинации сетки и замши.', 'кроссовки',
-     'Puma', 'https://www.puma.com', 'https://images.unsplash.com/photo-1597045566677-8cf032ed6634?w=500', 'мужской'),
-    ('Adidas Superstar (Men)', 11500.0, '11 500 руб.', 
-     'Знаменитые мужские кеды с прорезиненным мыском-ракушкой.', 'кеды', 
-     'Adidas', 'https://www.adidas.com', 'https://images.unsplash.com/photo-1549298916-b41d501d3772?w=500', 'мужской'),
-    ('Nike SB Chron 2 Slip', 7490.0, '7 490 руб.', 
-     'Легкие текстильные слипоны для скейтбординга.', 'слипоны', 
-     'Nike', 'https://www.nike.com', 'https://images.unsplash.com/photo-1560769629-975ec94e6a86?w=500', 'мужской'),
-    ('Nike Cole Haan Grand Oxford', 19500.0, '19 500 руб.', 'Классические мужские туфли-оксфорды.', 'туфли', 'Nike', 'https://www.nike.com', 'https://images.unsplash.com/photo-1539185441755-769473a23570?w=500', 'мужской'),
-    ('Puma Palermo Loafer', 14990.0, '14 990 руб.', 
-     'Трендовые кожаные лоферы.', 'лоферы', 
-     'Puma', 'https://www.puma.com', 'https://images.unsplash.com/photo-1614252235316-8c857d38b5f4?w=500', 'мужской'),
-    ('Puma Suede Moc V', 11200.0, '11 200 руб.', 
-     'Стильные повседневные мокасины.', 'мокасины', 
-     'Puma', 'https://www.puma.com', 'https://images.unsplash.com/photo-1520639888713-7851133b1ed0?w=500', 'мужской'),
-    ('Puma Desierto v3 Rubber', 14500.0, '14 500 руб.', 
-     'Высокие зимние ботинки.', 'ботинки', 
-     'Puma', 'https://www.puma.com', 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=500', 'мужской'),
-    ('Adidas Terrex Conrax BOA', 24000.0, '24 000 руб.', 
-     'Технологичные хайкинговые ботинки.', 'ботинки', 
-     'Adidas', 'https://www.adidas.com', 'https://images.unsplash.com/photo-1533867617858-e7b97e060509?w=500', 'мужской'),
-    ('Adidas Originals Western Strider', 28900.0, '28 900 руб.', 
-     'Лимитированные ковбойские сапоги-казаки.', 'казаки', 
-     'Adidas', 'https://www.adidas.com', 'https://images.unsplash.com/photo-1551107696-a4b0c5a0d9a2?w=500', 'мужской'),
-    ('Adidas Cyprex Ultra II', 7990.0, '7 990 руб.', 
-     'Туристические сандалии.', 'сандалии', 
-     'Adidas', 'https://www.adidas.com', 'https://images.unsplash.com/photo-1543163521-1bf539c55dd2?w=500', 'мужской'),
+    # МУЖСКИЕ
+    ('Nike Air Max Muse (Men)', 13439.0, '13 439 руб.', 'Кроссовки Nike Air Max Muse выполнены из комбинации текстиля и синтетической кожи', 'Кроссовки', 'Nike', 
+     'https://www.lamoda.ru/p/rtlaez517101/shoes-nike-krossovki/?utm_source=YDirect&utm_medium=cpc&utm_campaign=709827212.RU_SEMNB_WEB_Gallery_Sport_bns_2&utm_content=5751561535&utm_term=205751561535.---autotargeting&adjust_tracker=fk2tk4_56bkkg&adjust_campaign=RU_SEMNB_WEB_Gallery_Sport_bns_2&adjust_adgroup=5751561535&adjust_creative=205751561535.---autotargeting&adjust_ya_click_id=12738065913458720767&yclid=12738065913458720767&utm_referrer=https%3a%2f%2fyandex.ru%2f', 
+     r'C:\Users\Tania\Desktop\images_boots\Nike Air Max Muse.jpg', 'мужской'),
 
-    # ЖЕНСКАЯ ОБУВЬ
-    ('Nike Air Max 90 (Women)', 16500.0, '16 500 руб.', 'Культовый беговой силуэт.', 'кроссовки', 'Nike', 'https://www.nike.com', 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500', 'женский'),
-    ('Reebok Classic Leather (Women)', 9490.0, '9 490 руб.', 'Мягкая натуральная кожа.', 'кроссовки', 'Reebok', 'https://www.reebok.com', 'https://images.unsplash.com/photo-1582588678413-dbf45f4823e9?w=500', 'женский'),
-    ('Puma Club Nylon (Women)', 8900.0, '8 900 руб.', 'Классические низкие кеды.', 'кеды', 'Puma', 'https://www.puma.com', 'https://images.unsplash.com/photo-1511556532299-8f662fc26c06?w=500', 'женский'),
-    ('Reebok Club C 85 (Women)', 9990.0, '9 990 руб.', 'Минималистичные кеды.', 'кеды', 'Reebok', 'https://www.reebok.com', 'https://images.unsplash.com/photo-1575537359674-342ba15dfcbf?w=500', 'женский'),
-    ('Adidas Court Rally Slip', 6990.0, '6 990 руб.', 'Хлопковые слипоны.', 'слипоны', 'Adidas', 'https://www.adidas.com', 'https://images.unsplash.com/photo-1606107557195-0e29a4b5b4aa?w=500', 'женский'),
-    ('Adidas Jabbar Dress Low', 22000.0, '22 000 руб.', 'Премиальные туфли.', 'туфли', 'Adidas', 'https://www.adidas.com', 'https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500', 'женский'),
-    ('Puma Speedcat Mary Jane', 13500.0, '13 500 руб.', 'Трендовые туфли-балетки.', 'балетки', 'Puma', 'https://www.puma.com', 'https://images.unsplash.com/photo-1491553895911-0055eca6402d?w=500', 'женский'),
-    ('Adidas Terrex Winter Boot', 21990.0, '21 990 руб.', 'Высокие зимние сапоги.', 'сапоги', 'Adidas', 'https://www.adidas.com', 'https://images.unsplash.com/photo-1543163521-1bf539c55dd2?w=500', 'женский'),
-    ('Nike ACG Gaiadome GORE-TEX', 26500.0, '26 500 руб.', 'Профессиональные сапоги.', 'сапоги', 'Nike', 'https://www.nike.com', 'https://images.unsplash.com/photo-1607522370275-f14206abe5d3?w=500', 'женский'),
-    ('Nike ACG Woodside Chukka', 13200.0, '13 200 руб.', 'Элегантные ботильоны.', 'ботильоны', 'Nike', 'https://www.nike.com', 'https://images.unsplash.com/photo-1539185441755-769473a23570?w=500', 'женский'),
-    ('Reebok Work N Cushion Boot', 11990.0, '11 990 руб.', 'Прочные осенние ботинки.', 'ботинки', 'Reebok', 'https://www.reebok.com', 'https://images.unsplash.com/photo-1512374382149-4332c6c02150?w=500', 'женский'),
-    ('Nike Air Max Sol Sandal', 8990.0, '8 990 руб.', 'Спортивные сандалии.', 'сандалии', 'Nike', 'https://www.nike.com', 'https://images.unsplash.com/photo-1603252109303-2751441dd157?w=500', 'женский'),
-    ('Puma Platform Sandal Pop', 6490.0, '6 490 руб.', 'Открытые босоножки.', 'босоножки', 'Puma', 'https://www.puma.com', 'https://images.unsplash.com/photo-1562183241-b937e95585b6?w=500', 'женский'),
-    ('Adidas Adilette Clog', 4990.0, '4 990 руб.', 'Удобные клоги.', 'сабо', 'Adidas', 'https://www.adidas.com', 'https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?w=500', 'женский'),
-    ('Nike Calm Mule', 7990.0, '7 990 руб.', 'Минималистичные мюли.', 'мюли', 'Nike', 'https://www.nike.com', 'https://images.unsplash.com/photo-1551107696-a4b0c5a0d9a2?w=500', 'женский')
+    ('Adidas ULTRABOOST 22 (Men)', 15320.0, '15 320 руб.', 'Кроссовки выполнены из текстиля в комбинации с полимерными материалами', 'Кроссовки', 'Adidas', 
+     'https://www.lamoda.ru/p/rtlaaz638502/shoes-adidas-krossovki/?utm_source=YDirect&utm_medium=cpc&utm_campaign=709827212.RU_SEMNB_WEB_Gallery_Sport_bns_2&utm_content=5749954374&utm_term=205749954374.---autotargeting&adjust_tracker=fk2tk4_56bkkg&adjust_campaign=RU_SEMNB_WEB_Gallery_Sport_bns_2&adjust_adgroup=5749954374&adjust_creative=205749954374.---autotargeting&adjust_ya_click_id=1953357114619199487&yclid=1953357114619199487', 
+     r'C:\Users\Tania\Desktop\images_boots\ULTRABOOST 22.jpg', 'мужской'),
+
+    ('Reebok CLASSIC LEATHER (Men)', 5149.0, '5 149 руб.', 'Универсальные кроссовки, которые всегда будут твоей любимой классикой', 'Кроссовки', 'Reebok', 
+     'https://www.lamoda.ru/p/rtlaeb048901/shoes-reebok-krossovki/?utm_source=m_medium=cpc&utm_campaign=709827212.RU_SEMNB_WEB_Gallery_Sport_bns_2&utm_content=5749954YDirect&ut374&utm_term=205749954374.---autotargeting&adjust_tracker=fk2tk4_56bkkg&adjust_campaign=RU_SEMNB_WEB_Gallery_Sport_bns_2&adjust_adgroup=5749954374&adjust_creative=205749954374.---autotargeting&adjust_ya_click_id=920558410857447423&yclid=920558410857447423', 
+     r'C:\Users\Tania\Desktop\images_boots\reebok CLASSIC LEATHER.jpg', 'мужской'),
+
+    ('New Balance 574 (Men)', 13599.0, '13 599 руб.', 'New Balance 574 — это самая узнаваемая и продаваемая модель бренда, ставшая символом комфорта и классического спортивного стиля с момента своего выхода в 1988 году', 'Кроссовки', 'New Balance', 
+     'https://www.lamoda.ru/p/rtlafa234101/shoes-newbalance-krossovki/?utm_source=YDirect&utm_medium=cpc&utm_campaign=709827212.RU_SEMNB_WEB_Gallery_Sport_bns_2&utm_content=5749954374&utm_term=205749954374.---autotargeting&adjust_tracker=fk2tk4_56bkkg&adjust_campaign=RU_SEMNB_WEB_Gallery_Sport_bns_2&adjust_adgroup=5749954374&adjust_creative=205749954374.---autotargeting&adjust_ya_click_id=6134153342547394559&yclid=6134153342547394559', 
+     r'C:\Users\Tania\Desktop\images_boots\New Balance 574.jpg', 'мужской'),
+
+    ('Puma RS-X Efekt Perf (Men)', 12344.0, '12 344 руб.', 'Силуэт этих кроссовок, сочетающий элементы стиля ретро и футуризма, возвращается с прогрессивной эстетикой и угловатыми деталями, и такая комбинация создает сногсшибательный образ, свидетельствующий о вашем потрясающем стиле', 'Кроссовки', 'Puma', 
+     'https://www.lamoda.ru/p/rtlaeg505401/shoes-puma-krossovki/?utm_source=YDirect&utm_medium=cpc&utm_campaign=709827212.RU_SEMNB_WEB_Gallery_Sport_bns_2&utm_content=5749954374&utm_term=205749954374.---autotargeting&adjust_tracker=fk2tk4_56bkkg&adjust_campaign=RU_SEMNB_WEB_Gallery_Sport_bns_2&adjust_adgroup=5749954374&adjust_creative=205749954374.---autotargeting&adjust_ya_click_id=12191341694089428991&yclid=12191341694089428991', 
+     r'C:\Users\Tania\Desktop\images_boots\puma RS-X Efekt Perf.jpg', 'мужской'),
+
+    ('Asics KIRSH x Asics Gel-Lyte 5 (Men)', 15762.0, '15 762 руб.', 'Кроссовки выполнены из текстильного материала. Детали: система амортизации GEL обеспечивает превосходное поглощение ударных нагрузок', 'Кроссовки', 'Asics', 
+     'https://www.lamoda.ru/p/rtlaer589601/shoes-asics-krossovki/', 
+     r'C:\Users\Tania\Desktop\images_boots\Asics KIRSH x Asics Gel-Lyte 5.jpg', 'мужской'),
+
+    ('Demix BITCRAZY KNIT (Men)', 3055.0, '3 055 руб.', 'Кроссовки изготовлены из воздухопроницаемого вязаного текстиля, что обеспечивает оптимальную вентиляцию и комфортный микроклимат в течение дня', 'Кроссовки', 'Demix', 
+     'https://www.lamoda.ru/p/mp002xm0db3j/shoes-demix-krossovki/', 
+     r'C:\Users\Tania\Desktop\images_boots\demix BITCRAZY KNIT.jpg', 'мужской'),
+
+    ('Converse Chuck Taylor All Star (Men)', 14490.0, '14 490 руб.', 'Классические кеды', 'Кеды', 'Converse', 'url', 'img', 'мужской'),
+    ('Vans Old Skool (Men)', 7500.0, '7 500 руб.', 'Скейт-кеды', 'Кеды', 'Vans', 
+     'https://www.lamoda.ru/p/rtladk150501/shoes-converse-kedy/', 
+     r'C:\Users\Tania\Desktop\images_boots\Converse All Star.jpg', 'мужской'),
+
+    ('Dr. Martens (Men)', 29999.0, '29 999 руб.', 'Ботинки 1460 – первая и самая популярная модель Dr. Martens', 'Ботинки', 'Dr. Martens',
+     'https://www.lamoda.ru/p/rtlacq300003/shoes-drmartens-botinki/?utm_source=YDirect&utm_medium=cpc&utm_campaign=117318975.RU_SEMNB_Web_Gallery_SKU%20with%20potential&utm_content=5531119999&utm_term=54092077223.---autotargeting&adjust_tracker=fk2tk4_56bkkg&adjust_campaign=RU_SEMNB_Web_Gallery_SKU%20with%20potential&adjust_adgroup=5531119999&adjust_creative=54092077223.---autotargeting&adjust_ya_click_id=8705016481717420031&yclid=8705016481717420031', 
+     r'C:\Users\Tania\Desktop\images_boots\Dr. Martens.jpg', 'мужской'),
+    
+    ('Salomon OUTCHILL TS WP (Men)', 22000.0, '22 000 руб.', 'Мужские трекинговые ботинки выполнены из износостойкого текстиля', 'Ботинки', 'Salomon', 
+     'https://www.lamoda.ru/p/rtlaeu739201/shoes-salomon-botinki-trekingovye/', 
+     r'C:\Users\Tania\Desktop\images_boots\salomon OUTCHILL TS WP.jpg', 'мужской'),
+
+    ('Diesel Boots (Men)', 30748.0, '30 748 руб.', 'Надежные сапоги из замши', 'Сапоги', 'Diesel', 
+     'https://www.lamoda.ru/p/rtlaen250801/shoes-diesel-sapogi/url', 
+     r'C:\Users\Tania\Desktop\images_boots\Diesel.jpg', 'мужской'),
+
+    ('Salamander Moccasins (Men)', 13699.0, '13 699 руб.', 'Удобные классические лоферы', 'Лоферы', 'Salamander', 
+     'https://www.lamoda.ru/p/mp002xm084tx/shoes-salamander-mokasiny/', 
+     r'C:\Users\Tania\Desktop\images_boots\Moccasins Salamander.jpg', 'мужской'),
+
+    # ЖЕНСКИЕ
+    ('Nike Air Force 1 (Women)', 19999.0, '19 999 руб.', 'Низкие кеды Air Force 1 от Nike в лаконичном дизайне — то что нужно для твоего повседневного образа.', 'Кроссовки', 'Nike', 
+     'https://www.sportmaster.ru/product/33933150299/?utm_referrer=https%3A%2F%2Fwww.sportmaster.ru%2Fcatalog%2Fbrendy%2Fnike%2Fall%2F%3Ff-ware_line_ishop%3Dware_line_ishop_nike_air_force_1%26utm_referrer%3Dhttps%253A%252F%252Fyandex.ru%252F%26watched%3D2', 'https://images.unsplash.com/photo-1597350584914-55bb62285896?w=300', 'женский'),
+    
+    ('Gucci Blonde Boots (Women)', 309500.0, '309 500 руб.', 'Кожаные сапоги Blondie', 'Сапоги', 'Gucci', 
+     'https://www.tsum.ru/product/6853409-kozhanye-sapogi-blondie-gucci-chernyi/', 
+     r'C:\Users\Tania\Desktop\images_boots\gucci ankle boots.jpg', 'женский'),    
+    
+    ('Valentino Shoes Bowow Pink (Women)', 181000.0, '118 000 руб.', 'Кожаные туфли Bowow 45 Pink', 'Туфли', 'Valentino', 
+     'https://www.tsum.ru/product/7029704-kozhanye-tufli-bowow-45-valentino-svetlo-rozovyi/', 
+     r'C:\Users\Tania\Desktop\images_boots\valentino shoes.png', 'женский'),
+    
+    ('Valentino Shoes Rockstud (Women)', 125000.0, '125 000 руб.', 'Кожаные туфли Rockstud 100', 'Туфли', 'Valentino', 
+     'https://www.tsum.ru/product/7026716-kozhanye-tufli-rockstud-100-valentino-bezhevyi/', 
+     r'C:\Users\Tania\Desktop\images_boots\valentino shoes 2.png', 'женский'),
+    
+    ('Valentino Shoes Bowow Brown (Women)', 113000.0, '113 000 руб.', 'Кожаные туфли Bowow 45 Brown', 'Туфли', 'Valentino', 
+     'https://www.tsum.ru/product/7029112-kozhanye-tufli-bowow-45-valentino-korichnevyi/', 
+     r'C:\Users\Tania\Desktop\images_boots\valentino shoes 3.png', 'женский'),
+    
+    ('Jimmy Choo Stevie (Women)', 144500.0, '144 500 руб.', 'Атласные туфли Stevie 100', 'Туфли', 'Jimmy Choo', 
+     'https://www.tsum.ru/product/7093590-atlasnye-tufli-stevie-100-jimmy-choo-fioletovyi/', 
+     r'C:\Users\Tania\Desktop\images_boots\Jimmy Choo shoes.png', 'женский'),
+    
+    ('Bottega Veneta Loafers (Women)', 161000.0, '161 000 руб.', 'Черные лоферы из мягкой кожи', 'Лоферы', 'Bottega Veneta', 
+     'https://vipavenue.ru/product/1463629-lofery-koghanye-bottega-veneta/?utm_source=yandex&utm_medium=cpc&utm_term=---autotargeting&utm_campaign=reg0_dynamic_site_brand_poisk&adjust_ya_click_id=15390824404223000575&adjust_campaign=Reg0%20Динамическая%20по%20сайту%20Бренды%20Поиск%20%28reg0_dynamic_site_brand_poisk%29&utm_content=region%3AСингапур%7Cgeoid%3A10105%7Ccid%7C87939385%7Caid%7C1855273604544625770%7Cgid%7C5498428375%7Cph%7C53240101246%7Csrc%7Cyd%7Cyclid%3D15390824404223000575&referrer=reattribution%3D1&etext&yclid=15390824404223000575', 
+     r'C:\Users\Tania\Desktop\images_boots\loafers bottega veneta.jpg', 'женский'),
+    
+    ('Chanel Ballerina (Women)', 73550.0, '73 550 руб.', 'Кожаные балетки Ballerina', 'Балетки', 'Chanel', 
+     'https://www.tsum.ru/product/6423737-kozhanye-baletki-ballerina-co-chernyi-id103302447/', 
+     r'C:\Users\Tania\Desktop\images_boots\chanel ballerina.png', 'женский'),
+    
+    ('Maison Margiela Tabi (Women)', 137000.0, '137 000 руб.', 'Текстильные балетки Tabi Jazz', 'Таби', 'Maison Margiela', 
+     'https://www.tsum.ru/product/7104316-tekstilnye-baletki-tabi-jazz-maison-margiela-chernyi/?utm_source=yandex&utm_medium=cpc&is_retargeting=true&utm_campaign=cid.702649813_cn.tsum-performance-campaign-all-cat-all-source-new-clients-rf&utm_term=ph.205700116296_kw.---autotargeting&utm_content=dev.desktop_rid.213_gid.5700116296_aid.1898968452183945744_re.205700116296_drf.no_pos.2_postype.premium&af_sub1=ph.205700116296_kw.---autotargeting&af_adset=gid.5700116296_b.1898968452183945744_p.2_coef.35995563_st.search&yclid=7327593555405307903&redirect_source=m_domain', 
+     r'C:\Users\Tania\Desktop\images_boots\tabi.png', 'женский'),
+    
+    ('Valentino Mules (Women)', 104000, '104 000 руб.', 'Элегантные мюли', 'Мюли', 'Valentino', 
+     'https://www.tsum.ru/product/7060208-kozhanye-myuli-knotty-60-valentino-temno-korichnevyi/?utm_source=yandex&utm_medium=cpc&is_retargeting=true&utm_campaign=cid.702649813_cn.tsum-performance-campaign-all-cat-all-source-new-clients-rf&utm_term=ph.205700116296_kw.---autotargeting&utm_content=dev.desktop_rid.213_gid.5700116296_aid.1898968452183945744_re.205700116296_drf.no_pos.2_postype.premium&af_sub1=ph.205700116296_kw.---autotargeting&af_adset=gid.5700116296_b.1898968452183945744_p.2_coef.35995563_st.search&yclid=16316545127634960383&redirect_source=m_domain', 
+     r'C:\Users\Tania\Desktop\images_boots\mules valentino.png', 'женский'),
+    
+    ('Gucci Sandals (Women)', 113000.0, '113 000 руб.', 'Сандалии', 'Сандалии', 'Gucci', 
+     'https://www.tsum.ru/product/7067017-kombinirovannye-bosonozhki-gucci-sinii/?utm_source=yandex&utm_medium=cpc&is_retargeting=true&utm_campaign=cid.702649813_cn.tsum-performance-campaign-all-cat-all-source-new-clients-rf&utm_term=ph.205700116296_kw.---autotargeting&utm_content=dev.desktop_rid.213_gid.5700116296_aid.1898968452183945744_re.205700116296_drf.no_pos.2_postype.premium&af_sub1=ph.205700116296_kw.---autotargeting&af_adset=gid.5700116296_b.1898968452183945744_p.2_coef.35995563_st.search&yclid=2802904779170250751&redirect_source=m_domain', 
+     r'C:\Users\Tania\Desktop\images_boots\gucci sandals.png', 'женский'),
+    
+    ('Prada Sabo (Women)', 131000.0, '131 000', 'Кожаные сабо', 'Сабо', 'Prada', 
+     'https://www.tsum.ru/product/7064148-kozhanye-sabo-prada-chernyi/', 
+     r'C:\Users\Tania\Desktop\images_boots\prada sabo.png', 'женский')
 ]
 
 cursor.executemany('''INSERT INTO shoes 
@@ -107,10 +151,12 @@ cursor.executemany('''INSERT INTO shoes
 
 # --- ИНДИВИДУАЛЬНЫЕ РАЗМЕРЫ ---
 size_config = {
-    'Nike Air Force': [38, 39, 40],
-    'Adidas Ultraboost': [41, 42, 43, 44, 45],
-    'Puma RS-X': [42],
-    'Nike Air Max 90': [36, 37, 38],
+    'Nike Air Force 1': [36.5, 37.5, 38, 39],
+    'Gucci Blonde Boots': [37, 38, 38.5, 39],
+    'Valentino Shoes Bowow Pink': [37],
+    'Valentino Shoes Bowow Brown': [37.5, 38, 38.5, 39],
+    'Valentino Shoes Rockstud': [40],
+    'Jimmy Choo Stevie': [37, 38, 38.5, 39, 39.5, 40]
 }
 
 cursor.execute("SELECT id, name, gender FROM shoes")
@@ -127,7 +173,7 @@ for shoe_id, name, gender in all_shoes:
     
     # Если правил нет, ставим дефолт
     if not sizes:
-        sizes = [36, 37, 38, 39] if gender == 'женский' else [41, 42, 43, 44]
+        sizes = [36, 36.5, 37, 37.5, 38, 38.5, 39, 39.5, 40] if gender == 'женский' else [40, 40.5, 41, 41.5, 42, 42.5, 43, 43.5, 44, 44.5, 45]
         
     for size in sizes:
         stock_data.append((shoe_id, size, 5))
