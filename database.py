@@ -34,51 +34,28 @@ def get_available_brands_for_type(shoes_type, gender_text):
     
     return brands
 
-def search_shoes(shoes_type=None, brand=None, max_price=None, gender=None):
-    conn = sqlite3.connect('shoe_shop.db')
-    conn.row_factory = sqlite3.Row  # Это позволит обращаться к полям по именам (shoe['id'])
-    cur = conn.cursor()
-    query = "SELECT id, name, price, price_text, description, shoes_type, brand, url, image_url FROM shoes WHERE 1=1"
-    params = []
+def search_shoes(shoes_type, brand_filter, max_price, gender_text):
+    gender = "мужской" if "муж" in gender_text.lower() else "женский"
+    conn = get_db_connection()
     
-    # 1. Обработка типов обуви (с учетом наших новых кнопок "Показать все")
-    if shoes_type:
-        if shoes_type.startswith("all_in_"):
-            
-            cat_name = shoes_type.replace("all_in_", "")
+    # ИСПРАВЛЕНО: Заменили LOWER(shoes_type) на py_lower(shoes_type)
+    query = (
+        "SELECT id, name, price, price_text, description, shoes_type, brand, url, image_url, gender "
+        "FROM shoes WHERE py_lower(shoes_type) = py_lower(?) AND gender = ?"
+    )
+    params = [shoes_type, gender]
     
-            import bot  
-            subcategories = bot.CATALOG.get(gender, {}).get(cat_name, [])
-            
-            # Формируем условие IN (?, ?, ?)
-            placeholders = ", ".join(["?"] * len(subcategories))
-            query += f" AND LOWER(shoes_type) IN ({placeholders})"
-            for sub in subcategories:
-                params.append(sub.lower())
-        else:
-            # Обычный поиск по одной подкатегории
-            query += " AND LOWER(shoes_type) = ?"
-            params.append(shoes_type.lower())
-            
-    # 2. Фильтр по бренду
-    if brand and brand != "Any" and brand != "Любой":
-        query += " AND LOWER(brand) = ?"
-        params.append(brand.lower())
+    if brand_filter and brand_filter != 'Any':
+        # ИСПРАВЛЕНО: Заменили LOWER(brand) на py_lower(brand) на случай русских брендов
+        query += " AND py_lower(brand) = py_lower(?)"
+        params.append(brand_filter)
         
-    # 3. Фильтр по цене
-    if max_price is not None and max_price != float('inf'):
+    if max_price and max_price != float('inf'):
         query += " AND price <= ?"
         params.append(max_price)
         
-    # 4. Фильтр по полу
-    if gender:
-        db_gender = "женский" if "жен" in gender.lower() else "мужской"
-        query += " AND LOWER(gender) = ?"
-        params.append(db_gender)
-        
-    query += " ORDER BY RANDOM() LIMIT 3"
-    cur.execute(query, params)
-    shoes = cur.fetchall()
+    cursor = conn.execute(query, params)
+    shoes = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return shoes
 
