@@ -6,8 +6,7 @@ def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     
-    # ВАЖНОЕ ИСПРАВЛЕНИЕ: Регистрируем собственную функцию "py_lower" внутри SQLite.
-    # Теперь база данных сможет идеально переводить в нижний регистр РУССКИЕ буквы, используя возможности Python.
+    # Регистрируем собственную функцию "py_lower" внутри SQLite для работы с кириллицей.
     conn.create_function("py_lower", 1, lambda val: val.lower().strip() if val else "")
     
     return conn
@@ -20,11 +19,9 @@ def save_dialog(user_id, user_message, bot_answer):
     conn.close()
 
 def get_available_brands_for_type(shoes_type, gender_text):
-    # Приводим к формату бд ("Мужская обувь" -> "мужской")
     gender = "мужской" if "муж" in gender_text.lower() else "женский"
     conn = get_db_connection()
     
-    # ИСПРАВЛЕНО: Вместо штатного LOWER() используем нашу функцию py_lower()
     cursor = conn.execute(
         "SELECT DISTINCT brand FROM shoes WHERE py_lower(shoes_type) = py_lower(?) AND gender = ?", 
         (shoes_type, gender)
@@ -38,15 +35,29 @@ def search_shoes(shoes_type, brand_filter, max_price, gender_text):
     gender = "мужской" if "муж" in gender_text.lower() else "женский"
     conn = get_db_connection()
     
-    # ИСПРАВЛЕНО: Заменили LOWER(shoes_type) на py_lower(shoes_type)
-    query = (
-        "SELECT id, name, price, price_text, description, shoes_type, brand, url, image_url, gender "
-        "FROM shoes WHERE py_lower(shoes_type) = py_lower(?) AND gender = ?"
-    )
-    params = [shoes_type, gender]
+    params = []
+    
+    # РЕАЛИЗАЦИЯ ЗАДАНИЙ 1 и 2: Поддержка списков типов обуви для сквозного поиска
+    if isinstance(shoes_type, list):
+        # Формируем плейсхолдеры py_lower(?), py_lower(?) для SQL оператора IN
+        placeholders = ', '.join(['py_lower(?)'] * len(shoes_type))
+        query = (
+            f"SELECT id, name, price, price_text, description, shoes_type, brand, url, image_url, gender "
+            f"FROM shoes WHERE py_lower(shoes_type) IN ({placeholders}) AND gender = ?"
+        )
+        for t in shoes_type:
+            params.append(t)
+    else:
+        # Стандартный поиск по одной конкретной подкатегории
+        query = (
+            "SELECT id, name, price, price_text, description, shoes_type, brand, url, image_url, gender "
+            "FROM shoes WHERE py_lower(shoes_type) = py_lower(?) AND gender = ?"
+        )
+        params.append(shoes_type)
+        
+    params.append(gender)
     
     if brand_filter and brand_filter != 'Any':
-        # ИСПРАВЛЕНО: Заменили LOWER(brand) на py_lower(brand) на случай русских брендов
         query += " AND py_lower(brand) = py_lower(?)"
         params.append(brand_filter)
         

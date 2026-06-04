@@ -75,8 +75,7 @@ shoes_data = [
      'https://www.lamoda.ru/p/mp002xm0db3j/shoes-demix-krossovki/', 
      r'C:\Users\Tania\Desktop\images_boots\demix BITCRAZY KNIT.jpg', 'мужской'),
 
-    ('Converse Chuck Taylor All Star (Men)', 14490.0, '14 490 руб.', 'Классические кеды', 'Кеды', 'Converse', 'url', 'img', 'мужской'),
-    ('Vans Old Skool (Men)', 7500.0, '7 500 руб.', 'Скейт-кеды', 'Кеды', 'Vans', 
+    ('Converse Chuck Taylor All Star (Men)', 14490.0, '14 490 руб.', 'Классические кеды', 'Кеды', 'Converse', 
      'https://www.lamoda.ru/p/rtladk150501/shoes-converse-kedy/', 
      r'C:\Users\Tania\Desktop\images_boots\Converse All Star.jpg', 'мужской'),
 
