@@ -155,6 +155,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_text_lower = user_text.lower().strip()
 
+    # 1. АНАЛИЗ КОНТЕКСТА: Определяем тему текущего сообщения пользователя ДО генерации ответа
+    if any(w in user_text_lower for w in ["спорт", "волейбол", "футбол", "бег", "тренировка"]):
+        context.user_data['last_topic'] = 'sports'
+    elif any(w in user_text_lower for w in ["кино", "фильм", "сериал", "книга", "аниме", "комедия", "читаю"]):
+        context.user_data['last_topic'] = 'movies'
+    elif any(w in user_text_lower for w in ["погода", "погодка", "дождь", "холодно", "жара", "снег", "слякоть", "солнечно"]):
+        context.user_data['last_topic'] = 'weather'
+
     context.user_data['msg_count'] = context.user_data.get('msg_count', 0) + 1
     msg_count = context.user_data['msg_count']
     current_topic = context.user_data.get('last_topic', 'general')
@@ -164,7 +172,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['msg_count'] = -5 
         should_show_ad = False
     else:
-        if (msg_count >= 4 and current_topic == 'sports') or (msg_count >= 6):
+        if (msg_count >= 3 and current_topic == 'sports') or (msg_count >= 6):
             should_show_ad = True
             context.user_data['msg_count'] = 0  
         else:
@@ -189,6 +197,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_final_search(update.message, context)
         return
 
+    # 2. Передаем в ИИ-обработчик уже АКТУАЛЬНУЮ тему для формирования умной рекламы
     intent, response = process_message(
         user_text, 
         allow_ad=should_show_ad, 
@@ -205,21 +214,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if response:
-        r = response.lower()
-        if any(w in r for w in ["спорт", "волейбол", "футбол", "бег", "тренировка"]):
-            context.user_data['last_topic'] = 'sports'
-        elif any(w in r for w in ["кино", "фильм", "сериал", "книга", "аниме"]):
-            context.user_data['last_topic'] = 'movies'
         context.user_data['last_bot_message'] = response
-
-    if response:
         await update.message.reply_text(response, reply_markup=get_main_keyboard())
         database.save_dialog(user_id, user_text, response)
         return
 
     await update.message.reply_text("Интересно, расскажи подробнее!", reply_markup=get_main_keyboard())
     database.save_dialog(user_id, user_text, "Не понял")
-
 
 async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
