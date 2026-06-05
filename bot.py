@@ -181,6 +181,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "в главное меню" in user_text_lower or user_text_lower == "/start":
         context.user_data.clear()
         response = "Вы вернулись в главное меню. Чем займемся?"
+        
+        if context.user_data.get('is_voice_session'):
+            context.user_data['last_bot_response'] = response
+            database.save_dialog(user_id, user_text, response)
+            return
+            
         await update.message.reply_text("Очищаю меню...", reply_markup=ReplyKeyboardRemove())
         await update.message.reply_text(response, reply_markup=get_start_inline())
         database.save_dialog(user_id, user_text, response)
@@ -189,11 +195,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('awaiting_price_text'):
         max_price = parse_price(user_text)
         if max_price is None:
-            await update.message.reply_text("Не понял сумму. Введите числом (напр. 15000).", reply_markup=get_main_keyboard())
+            response = "Не понял сумму. Введите числом (напр. 15000)."
+            if context.user_data.get('is_voice_session'):
+                context.user_data['last_bot_response'] = response
+                return
+            await update.message.reply_text(response, reply_markup=get_main_keyboard())
             return
         context.user_data['max_price'] = max_price
         context.user_data['awaiting_price_text'] = False
         context.user_data['current_page'] = 0
+        
+        # Инлайн-кнопки или генерация карточек товаров в процессе final_search
+        # Для голосового режима извлечем текстовое описание результата (если потребуется озвучить статус)
+        if context.user_data.get('is_voice_session'):
+            context.user_data['last_bot_response'] = "Показываю найденные варианты по вашему бюджету."
+            
         await process_final_search(update.message, context)
         return
 
@@ -208,20 +224,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buying_phrases = ["хочу купить", "купить обувь", "купить кроссовки", "подбор обуви", "выбрать обувь"]
     if intent == "buy_shoes" or any(phrase in user_text_lower for phrase in buying_phrases):
         context.user_data.clear()
+        response = "О, подбор обуви — это по моей части! 👟 Какой ассортимент Вас интересует?"
+        
+        if context.user_data.get('is_voice_session'):
+            context.user_data['last_bot_response'] = response
+            database.save_dialog(user_id, user_text, "Начал подбор обуви")
+            return
+            
         await update.message.reply_text("Перехожу к подбору...", reply_markup=ReplyKeyboardRemove())
-        await update.message.reply_text("О, подбор обуви — это по моей части! 👟 Какой ассортимент Вас интересует?", reply_markup=get_gender_inline())
+        await update.message.reply_text(response, reply_markup=get_gender_inline())
         database.save_dialog(user_id, user_text, "Начал подбор обуви")
         return
 
     if response:
         context.user_data['last_bot_message'] = response
+        
+        if context.user_data.get('is_voice_session'):
+            context.user_data['last_bot_response'] = response
+            database.save_dialog(user_id, user_text, response)
+            return
+            
         await update.message.reply_text(response, reply_markup=get_main_keyboard())
         database.save_dialog(user_id, user_text, response)
         return
 
-    await update.message.reply_text("Интересно, расскажи подробнее!", reply_markup=get_main_keyboard())
-    database.save_dialog(user_id, user_text, "Не понял")
+    fallback_response = "Интересно, расскажи подробнее!"
+    if context.user_data.get('is_voice_session'):
+        context.user_data['last_bot_response'] = fallback_response
+        database.save_dialog(user_id, user_text, "Не понял")
+        return
 
+    await update.message.reply_text(fallback_response, reply_markup=get_main_keyboard())
+    database.save_dialog(user_id, user_text, "Не понял")
+    
 async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -546,33 +581,78 @@ async def process_final_search(message_obj, context, edit_mode=False):
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from voice_utils import transcribe_voice
+    from voice_utils import transcribe_voice, text_to_voice
+    import os
+    
     user_id = update.effective_user.id
     voice = update.message.voice
-    await update.message.reply_text("Распознаю голос...")
+    
+    # Отправляем предварительный статус, чтобы пользователь понимал, что бот думает
+    status_msg = await update.message.reply_text("🎧 Слушаю и распознаю ваш голос...")
     
     voice_dir = "temp_voice"
     if not os.path.exists(voice_dir):
         os.makedirs(voice_dir)
         
-    ogg_path = os.path.join(voice_dir, f"voice_{user_id}_{voice.file_unique_id}.ogg")
+    ogg_input_path = os.path.join(voice_dir, f"voice_{user_id}_{voice.file_unique_id}.ogg")
+    ogg_output_path = os.path.join(voice_dir, f"response_{user_id}_{voice.file_unique_id}.ogg")
+    
     try:
+        # 1. Скачиваем голосовое сообщение пользователя
         file = await context.bot.get_file(voice.file_id)
-        await file.download_to_drive(ogg_path)
-        transcribed_text = transcribe_voice(ogg_path)
+        await file.download_to_drive(ogg_input_path)
         
-        if not transcribed_text or "Ошибка" in transcribed_text:
-            await update.message.reply_text("Не удалось распознать речь.")
+        # 2. Переводим звук в текст (STT)
+        transcribed_text = transcribe_voice(ogg_input_path)
+        
+        if not transcribed_text or "Ошибка" in transcribed_text or "Не удалось распознать" in transcribed_text:
+            await status_msg.edit_text("❌ Не удалось разобрать слова. Попробуйте сказать чётче или напишите текстом.")
             return
             
-        await update.message.reply_text(f"🎤 Вы сказали: {transcribed_text}")
+        # Удаляем сообщение о распознавании, чтобы не засорять чат
+        await status_msg.delete()
+        
+        # Выводим пользователю, что мы услышали (для прозрачности)
+        await update.message.reply_text(f"🎤 _Вы сказали:_ \"{transcribed_text}\"", parse_mode="Markdown")
+        
+        # 3. Передаем флаг и текст в handle_message
         context.user_data['voice_text_override'] = transcribed_text
+        context.user_data['is_voice_session'] = True  # Этот флаг мы прочитаем в handle_message
+        
+        # Вызываем логику обработки (ML классификатор / FSM)
+        # ВАЖНО: handle_message должен уметь возвращать или записывать текст ответа!
+        # Предположим, handle_message запишет ответ в context.user_data['last_bot_response']
         await handle_message(update, context)
+        
+        # 4. Извлекаем текстовый ответ бота, который подготовил handle_message
+        bot_text_answer = context.user_data.get('last_bot_response', None)
+        
+        if bot_text_answer:
+            # 5. Синтезируем текст ответа в голос (TTS)
+            voice_response = text_to_voice(bot_text_answer, output_path=ogg_output_path)
+            
+            if voice_response and os.path.exists(voice_response):
+                # 6. Отправляем нативное голосовое сообщение обратно пользователю
+                with open(voice_response, 'rb') as voice_file:
+                    await update.message.reply_voice(
+                        voice=voice_file, 
+                        caption="👟 Ответ shoe_bot" # Подпись под голосовым сообщением
+                    )
+            else:
+                # Резервный вариант, если FFmpeg дал сбой при кодировании TTS
+                await update.message.reply_text(bot_text_answer)
+                
+    except Exception as e:
+        await update.message.reply_text(f"Произошла ошибка при генерации голосового ответа: {e}")
+        
     finally:
-        if os.path.exists(ogg_path):
-            try: os.remove(ogg_path)
-            except: pass
-
+        # Подчищаем за собой временные файлы, чтобы диск на сервере не переполнялся
+        context.user_data.pop('is_voice_session', None)
+        context.user_data.pop('last_bot_response', None)
+        for path in [ogg_input_path, ogg_output_path]:
+            if os.path.exists(path):
+                try: os.remove(path)
+                except: pass
 
 def main():
     request_config = HTTPXRequest(proxy=None, connect_timeout=30.0, read_timeout=30.0)
