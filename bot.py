@@ -184,6 +184,17 @@ async def handle_shoe_selection_by_text(update: Update, context: ContextTypes.DE
     if any(word in user_text_lower for word in ["погода", "как дела", "привет", "кто ты", "что умеешь"]):
         return False
 
+    # Обработка текстовых команд "показать все типы" и "показать весь ассортимент"
+    if "показать весь ассортимент" in user_text_lower:
+        simulated_query = SimulatedQuery(update.message, "show_all_gender_shoes")
+        await handle_inline_click(update, context, external_query=simulated_query)
+        return True
+
+    if "показать все типы" in user_text_lower:
+        simulated_query = SimulatedQuery(update.message, "show_all_category_types")
+        await handle_inline_click(update, context, external_query=simulated_query)
+        return True
+
     # 1. ЭТАП: Выбор пола
     if "ассортимент вас интересует" in last_bot_msg or not context.user_data.get('current_gender'):
         gender_options = {"мужская обувь": "gender_male", "женская обувь": "gender_female"}
@@ -193,7 +204,7 @@ async def handle_shoe_selection_by_text(update: Update, context: ContextTypes.DE
             await handle_inline_click(update, context, external_query=simulated_query)
             return True
 
-    # 2. ЭТАП: Выбор общей категории
+    # 2. ЭТАП: Вы выбор общей категории
     if "выберите общую категорию обуви" in last_bot_msg or (context.user_data.get('current_gender') and not context.user_data.get('current_category')):
         gender = context.user_data.get('current_gender', "Мужская обувь")
         categories = list(CATALOG.get(gender, {}).keys())
@@ -241,12 +252,10 @@ async def handle_shoe_selection_by_text(update: Update, context: ContextTypes.DE
         # ОБРАБОТКА ОТКАЗА: Если пользователь говорит "никакая", "ничего не нравится" и т.д.
         rejection_phrases = ["никакая", "ни одна", "ничего", "не нравится", "нет", "отмена", "никакой"]
         if any(phrase in processed_text for phrase in rejection_phrases) and "размер" not in last_bot_msg:
-            # Имитируем нажатие кнопки "Нет, не нравится" (shoes_no)
             simulated_query = SimulatedQuery(update.message, "shoes_no")
             await handle_inline_click(update, context, external_query=simulated_query)
             return True
 
-        # Переводим текстовые числительные в цифры
         for word, num in TEXT_NUMBERS.items():
             processed_text = re.sub(rf'\b{word}\b', num, processed_text)
 
@@ -277,11 +286,22 @@ async def handle_shoe_selection_by_text(update: Update, context: ContextTypes.DE
             await update.message.reply_text(response)
             return True
 
+    return False
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = context.user_data.pop('voice_text_override', update.message.text)
     user_id = update.effective_user.id
     user_text_lower = user_text.lower().strip()
+
+    # [ИСПРАВЛЕНО] Команда Главного меню перенесена на самый верх, чтобы прерывать любой этап подбора мгновенно
+    if "в главное меню" in user_text_lower or user_text_lower == "/start":
+        context.user_data.clear()
+        response = "Вы вернулись в главное меню. Чем займемся?"
+        await update.message.reply_text("Очищаю меню...", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(response, reply_markup=get_start_inline())
+        database.save_dialog(user_id, user_text, response)
+        return
 
     is_searching_shoes = any(k in context.user_data for k in ['current_gender', 'current_category', 'shoes_type', 'brand'])
     last_bot_msg = context.user_data.get('last_bot_message', '')
@@ -292,9 +312,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
 
     if is_searching_shoes or is_bot_waiting_shoe_param or context.user_data.get('awaiting_price_text'):
-        if context.user_data.get('is_voice_session'):
-            context.user_data['suppress_tts'] = True
-
         is_user_saying_brand = any(key in user_text_lower for key in BRANDS.keys())
         is_asking_all_brands = any(ph in user_text_lower for ph in ["все бренды", "показать все бренды", "любой бренд"])
         
@@ -322,14 +339,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if was_processed:
             return
 
-    if "в главное меню" in user_text_lower or user_text_lower == "/start":
-        context.user_data.clear()
-        response = "Вы вернулись в главное меню. Чем займемся?"
-        await update.message.reply_text("Очищаю меню...", reply_markup=ReplyKeyboardRemove())
-        await update.message.reply_text(response, reply_markup=get_start_inline())
-        database.save_dialog(user_id, user_text, response)
-        return
-
     if any(w in user_text_lower for w in ["спорт", "волейбол", "футбол", "бег"]):
         context.user_data['last_topic'] = 'sports'
     elif any(w in user_text_lower for w in ["кино", "фильм", "сериал"]):
@@ -348,7 +357,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     intent, response = process_message(user_text, allow_ad=should_show_ad, topic=current_topic, last_bot_msg=last_bot_msg)
 
     buying_phrases = ["хочу купить", "купить обувь", "купить кроссовки", "подбор обуви", "выбрать обувь"]
-    if intent == "buy_shoes" or any(phrase in user_text_lower for phrase in buying_phrases):
+    if (intent == "buy_shoes" or any(phrase in user_text_lower for phrase in buying_phrases)) and "показать все" not in user_text_lower and "показать весь" not in user_text_lower:
         context.user_data.clear()
         response = "О, подбор обуви — это по моей части! 👟 Какой ассортимент Вас интересует?"
         context.user_data['last_bot_message'] = response
@@ -359,13 +368,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if response:
         context.user_data['last_bot_message'] = response
-        await update.message.reply_text(response, reply_markup=get_main_keyboard())
+        context.user_data['last_bot_response'] = response  
+        if not context.user_data.get('is_voice_session'):   
+            await update.message.reply_text(response, reply_markup=get_main_keyboard())
         database.save_dialog(user_id, user_text, response)
         return
 
     fallback_response = "Интересно, расскажи подробнее!"
     context.user_data['last_bot_message'] = fallback_response
-    await update.message.reply_text(fallback_response, reply_markup=get_main_keyboard())
+    context.user_data['last_bot_response'] = fallback_response  
+    if not context.user_data.get('is_voice_session'):           
+        await update.message.reply_text(fallback_response, reply_markup=get_main_keyboard())
     database.save_dialog(user_id, user_text, "Не понял")
     
     
@@ -493,16 +506,15 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         shoes_type = context.user_data.get('shoes_type')
         gender = context.user_data.get('current_gender')
         
-        # Если был выбран весь ассортимент пола (Мужская/Женская обувь)
         if shoes_type == "all_gender":
             context.user_data.pop('brand', None)
             context.user_data.pop('shoes_type', None)
-            response = "Давайте вернемся к выбору ассортимента:"
+            # ИСПРАВЛЕНО: Теперь возвращает к категориям выбранного пола, а не к выбору пола
+            response = f"Раздел: '{gender}'. Выберите общую категорию обуви:"
             context.user_data['last_bot_message'] = response
-            await query.edit_message_text(response, reply_markup=get_gender_inline())
+            await query.edit_message_text(response, reply_markup=get_categories_inline(gender))
             return
             
-        # Если был выбран показ всех типов внутри конкретной категории (например, все типы в Туфлях и балетках)
         elif shoes_type == "all_category":
             context.user_data.pop('brand', None)
             context.user_data.pop('shoes_type', None)
@@ -512,7 +524,6 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text(response, reply_markup=get_subcategories_inline(gender, category))
             return
             
-        # Обычный возврат к брендам, если искали конкретный тип обуви
         context.user_data.pop('brand', None)
         available_brands = database.get_available_brands_for_type(shoes_type, gender)
         response = f"Ищем {shoes_type.lower()}. Какой бренд предпочитаете?"
@@ -529,7 +540,7 @@ async def handle_inline_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     if data == "reject_price":
         context.user_data['awaiting_price_text'] = True
-        response = "Хорошо, давайте изменим бюджет. На какую максимальную сумму рассчитываете?"
+        response = "Хорошо, давайте изменем бюджет. На какую максимальную сумму рассчитываете?"
         context.user_data['last_bot_message'] = response
         await query.message.reply_text(response, reply_markup=get_price_inline())
         return
@@ -732,20 +743,17 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🎤 _Вы сказали:_ \"{transcribed_text}\"", parse_mode="Markdown")
         
         context.user_data['voice_text_override'] = transcribed_text
-        context.user_data['is_voice_session'] = True  
+        context.user_data.pop('last_bot_response', None)  
+        context.user_data['is_voice_session'] = True     
+        
         await handle_message(update, context)
         
-        if context.user_data.get('suppress_tts'): 
-            return
-            
         bot_text_answer = context.user_data.get('last_bot_response', None)
         if bot_text_answer:
             voice_response = text_to_voice(bot_text_answer, output_path=ogg_output_path)
             if voice_response and os.path.exists(voice_response):
                 with open(voice_response, 'rb') as voice_file:
                     await update.message.reply_voice(voice=voice_file, caption="👟 Ответ shoe_bot")
-            else:
-                await update.message.reply_text(bot_text_answer)
                 
     except Exception as e:
         logger.error(f"Ошибка во время обработки голосового сообщения: {e}")
@@ -754,9 +762,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
     finally:
-        context.user_data.pop('is_voice_session', None)
         context.user_data.pop('last_bot_response', None)
-        context.user_data.pop('suppress_tts', None)
+        context.user_data.pop('is_voice_session', None)  
         
         for path in [ogg_input_path, ogg_output_path]:
             if path and os.path.exists(path):
@@ -780,7 +787,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     
-    print("🚀 Бот полностью обновлен! Перехваты стейтов устранены.")
+    print("🚀 Приоритет команды возврата в главное меню исправлен!")
     app.run_polling()
 
 if __name__ == '__main__':
